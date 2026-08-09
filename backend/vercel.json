@@ -4,7 +4,7 @@
     { "source": "/(.*)", "destination": "/api" }
   ],
   "crons": [
-    { "path": "/api/cron/checkins", "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/reassign-flags", "schedule": "*/30 * * * *" }
+    { "path": "/api/cron/checkins", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/reassign-flags", "schedule": "30 3 * * *" }
   ]
 }
