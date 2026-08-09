@@ -17,7 +17,8 @@ CREATE TABLE staff_users (
   clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
   name VARCHAR(255) NOT NULL,
   role VARCHAR(50) NOT NULL, -- 'admin', 'coordinator', 'nurse', 'doctor'
-  phone VARCHAR(20) NOT NULL,
+  phone VARCHAR(20) UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
   notify_on_flag BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -99,4 +100,15 @@ CREATE TABLE flags (
   assigned_to UUID REFERENCES staff_users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   resolved_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Pilot Requests Table (public marketing site "Request a Pilot" form submissions)
+CREATE TABLE pilot_requests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  contact_name VARCHAR(255) NOT NULL,
+  clinic_name VARCHAR(255) NOT NULL,
+  contact_info VARCHAR(255) NOT NULL, -- phone or email, free text
+  patient_volume_estimate VARCHAR(100),
+  message TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

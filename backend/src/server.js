@@ -1,26 +1,10 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-
-const whatsappRoutes = require('./routes/whatsapp.routes');
-const prescriptionRoutes = require('./routes/prescriptions.routes');
-const flagRoutes = require('./routes/flags.routes');
+// Entrypoint for a persistent process (AWS EC2, Railway, etc.) — runs the
+// BullMQ scheduler worker and periodic scans in-process. For serverless
+// (Vercel) deployment, see api/index.js and vercel.json's cron config instead,
+// which hit /api/cron/* on a schedule rather than running setInterval.
+const app = require('./app');
 const { scanAndScheduleDueCheckins } = require('./services/scheduler.service');
 const { reassignStaleFlags } = require('./services/escalation.service');
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-// Basic health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Mount API routes
-app.use('/api/whatsapp', whatsappRoutes);
-app.use('/api/prescriptions', prescriptionRoutes);
-app.use('/api/flags', flagRoutes);
 
 // Run the check-in scanner every 15 minutes
 setInterval(() => {
