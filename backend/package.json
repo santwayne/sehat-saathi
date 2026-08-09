@@ -1,0 +1,20 @@
+{
+  "name": "sehat-saathi-backend",
+  "version": "1.0.0-mvp",
+  "description": "Sehat Saathi core backend & engine",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "axios": "^1.7.7",
+    "bullmq": "^5.13.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "pg": "^8.13.0"
+  }
+}
