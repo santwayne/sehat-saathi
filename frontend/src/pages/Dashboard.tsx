@@ -1,81 +1,189 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../lib/api';
-import { useAuth } from '../context/AuthContext';
+import { AlertTriangle, Flag as FlagIcon, Pill, Users } from 'lucide-react';
+import { AppShell } from '@/components/app/app-shell';
+import { LoadingState, EmptyState, ErrorState } from '@/components/app/states';
+import { useAuth } from '@/context/AuthContext';
+import { api } from '@/lib/api';
 
-interface Flag {
+interface ApiFlag {
   id: string;
   flag_type: string;
   priority: 'urgent' | 'normal';
+  status: string;
   patient_name: string;
   patient_phone: string;
+  doctor_name: string | null;
   created_at: string;
+}
+
+function StatCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone = 'default',
+}: {
+  label: string;
+  value: number | string;
+  hint: string;
+  icon: typeof Users;
+  tone?: 'default' | 'alert';
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 shadow-card">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-muted-foreground">{label}</span>
+        <span
+          className={
+            tone === 'alert'
+              ? 'flex size-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive'
+              : 'flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary'
+          }
+        >
+          <Icon className="size-4" aria-hidden />
+        </span>
+      </div>
+      <p className="mt-3 font-display text-3xl font-semibold text-foreground">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
 }
 
 export default function Dashboard() {
   const { staff } = useAuth();
-  const [openFlags, setOpenFlags] = useState<Flag[] | null>(null);
+  const [flags, setFlags] = useState<ApiFlag[] | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [patientCount, setPatientCount] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const scope = staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide';
 
   useEffect(() => {
     if (!staff) return;
-    api
-      .get<{ data: Flag[] }>(`/api/flags?status=open&role=${staff.role}&staff_id=${staff.id}`)
-      .then((res) => setOpenFlags(res.data))
-      .catch(() => setOpenFlags([]));
-    api
-      .get<{ data: unknown[] }>('/api/prescriptions/pending')
-      .then((res) => setPendingCount(res.data.length))
-      .catch(() => setPendingCount(0));
+    setLoading(true);
+    Promise.all([
+      api
+        .get<{ data: ApiFlag[] }>(`/api/flags?status=open&role=${staff.role}&staff_id=${staff.id}`)
+        .then((r) => setFlags(r.data))
+        .catch(() => setFlags([])),
+      api
+        .get<{ data: unknown[] }>('/api/prescriptions/pending')
+        .then((r) => setPendingCount(r.data.length))
+        .catch(() => setPendingCount(0)),
+      api
+        .get<{ data: unknown[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}`)
+        .then((r) => setPatientCount(r.data.length))
+        .catch(() => setPatientCount(0)),
+    ])
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
+      .finally(() => setLoading(false));
   }, [staff]);
 
-  const urgentCount = openFlags?.filter((f) => f.priority === 'urgent').length ?? 0;
-  const normalCount = (openFlags?.length ?? 0) - urgentCount;
+  const urgent = (flags ?? []).filter((f) => f.priority === 'urgent');
+  const allEmpty =
+    patientCount === 0 && (flags?.length ?? 0) === 0 && pendingCount === 0 && !loading;
+
+  function retry() {
+    setError(null);
+    setFlags(null);
+    setPendingCount(null);
+    setPatientCount(null);
+    setLoading(true);
+    if (!staff) return;
+    Promise.all([
+      api
+        .get<{ data: ApiFlag[] }>(`/api/flags?status=open&role=${staff.role}&staff_id=${staff.id}`)
+        .then((r) => setFlags(r.data))
+        .catch(() => setFlags([])),
+      api
+        .get<{ data: unknown[] }>('/api/prescriptions/pending')
+        .then((r) => setPendingCount(r.data.length))
+        .catch(() => setPendingCount(0)),
+      api
+        .get<{ data: unknown[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}`)
+        .then((r) => setPatientCount(r.data.length))
+        .catch(() => setPatientCount(0)),
+    ])
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
+      .finally(() => setLoading(false));
+  }
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold mb-1">Good day, {staff?.name}</h1>
-      <p className="text-sm text-slate-500 mb-6">Clinic-wide overview</p>
-
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <p className="text-xs text-slate-500 mb-1">Urgent flags</p>
-          <p className="text-3xl font-semibold text-red-600">{openFlags === null ? '—' : urgentCount}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <p className="text-xs text-slate-500 mb-1">Normal flags</p>
-          <p className="text-3xl font-semibold">{openFlags === null ? '—' : normalCount}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <p className="text-xs text-slate-500 mb-1">Pending prescriptions</p>
-          <p className="text-3xl font-semibold">{pendingCount === null ? '—' : pendingCount}</p>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold">Needs attention now</h2>
-        <Link to="/app/flags" className="text-sm text-teal-700">View all flags →</Link>
-      </div>
-      <div className="space-y-2 mb-8">
-        {(openFlags?.filter((f) => f.priority === 'urgent').slice(0, 5) ?? []).map((f) => (
-          <div key={f.id} className="bg-white border-l-4 border-l-red-500 border border-slate-200 rounded-lg p-3 text-sm">
-            <span className="font-medium">{f.patient_name}</span>
-            <span className="text-slate-500"> · {f.patient_phone} · {f.flag_type}</span>
+    <AppShell
+      title={`Good day, ${staff?.name?.split(' ')[0] ?? ''}`}
+      description={`${scope} overview of today's clinic activity.`}
+    >
+      {loading ? (
+        <LoadingState rows={4} label="Loading clinic overview…" />
+      ) : error ? (
+        <ErrorState error={error} onRetry={retry} />
+      ) : allEmpty ? (
+        <EmptyState
+          title="No clinic activity yet"
+          description="Once patients are enrolled and conversations start, their flags and prescriptions will appear here."
+        />
+      ) : (
+        <div className="space-y-8">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="Patients"
+              value={patientCount ?? '—'}
+              hint={scope}
+              icon={Users}
+            />
+            <StatCard
+              label="Open flags"
+              value={flags?.length ?? '—'}
+              hint="Awaiting staff review"
+              icon={FlagIcon}
+              tone={(flags?.length ?? 0) > 0 ? 'alert' : 'default'}
+            />
+            <StatCard
+              label="Needs attention"
+              value={urgent.length}
+              hint="Urgent priority"
+              icon={AlertTriangle}
+              tone={urgent.length > 0 ? 'alert' : 'default'}
+            />
+            <StatCard
+              label="Pending prescriptions"
+              value={pendingCount ?? '—'}
+              hint="Awaiting verification"
+              icon={Pill}
+            />
           </div>
-        ))}
-        {openFlags && openFlags.filter((f) => f.priority === 'urgent').length === 0 && (
-          <p className="text-sm text-slate-400">Nothing urgent right now.</p>
-        )}
-      </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        {['Missed-dose catch rate', 'Follow-up attendance rate', 'Doctor time saved'].map((label) => (
-          <div key={label} className="bg-slate-50 border border-dashed border-slate-300 rounded-lg p-5 text-center">
-            <p className="text-xs text-slate-400">{label}</p>
-            <p className="text-sm text-slate-400 mt-1">Coming soon</p>
-          </div>
-        ))}
-      </div>
-    </div>
+          <section className="rounded-xl border border-border bg-card p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg font-semibold text-foreground">Priority flags</h2>
+              <Link to="/app/flags" className="text-sm font-medium text-primary hover:underline">
+                View all flags
+              </Link>
+            </div>
+            {urgent.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                No urgent flags right now.
+              </p>
+            ) : (
+              <ul className="mt-4 divide-y divide-border">
+                {urgent.slice(0, 5).map((flag) => (
+                  <li key={flag.id} className="flex items-start justify-between gap-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{flag.patient_name}</p>
+                      <p className="text-sm text-muted-foreground">{flag.flag_type.replace(/_/g, ' ')}</p>
+                    </div>
+                    <span className="rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive capitalize">
+                      {flag.priority}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
+    </AppShell>
   );
 }

@@ -1,207 +1,467 @@
-import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
-import { useAuth } from '../context/AuthContext';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ClipboardCheck,
+  Clock,
+  FileText,
+  Loader2,
+  Phone,
+  ShieldAlert,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { AppShell } from '@/components/app/app-shell';
+import { EmptyState, ErrorState, LoadingState } from '@/components/app/states';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { useAuth } from '@/context/AuthContext';
+import { api } from '@/lib/api';
+import { cn } from '@/lib/utils';
+
+type Confidence = 'high' | 'medium' | 'low';
 
 interface Medicine {
   name: string;
-  dosage: string | null;
-  frequency: string | null;
-  timing: string | null;
-  duration: string | null;
-  confidence: 'high' | 'medium' | 'low';
+  dosage: string;
+  frequency: string;
+  timing: string;
+  duration: string;
+  confidence: Confidence;
 }
 
-interface StructuredJson {
+interface StructuredRx {
   diagnosis: string | null;
   follow_up_date: string | null;
   medicines: Medicine[];
-  overall_confidence: 'high' | 'medium' | 'low';
+  overall_confidence: Confidence;
   illegible_notes_flag: boolean;
 }
 
-interface Prescription {
+interface PendingPrescription {
   id: string;
   image_url: string;
   ocr_raw_text: string;
-  structured_json: StructuredJson;
-  ocr_confidence: string;
+  structured_json: StructuredRx;
+  ocr_confidence: Confidence;
   created_at: string;
   patient_name: string;
   patient_phone: string;
   language_pref: string;
 }
 
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 60) return `${Math.max(mins, 0)}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function ConfidenceBadge({ level }: { level: Confidence }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+        level === 'high' && 'bg-success-surface text-foreground',
+        level === 'medium' && 'bg-secondary text-secondary-foreground',
+        level === 'low' && 'bg-warning-surface text-warning-foreground',
+      )}
+    >
+      {level === 'low' && <AlertTriangle className="size-3" />}
+      {level}
+    </span>
+  );
+}
+
+function FieldInput({
+  label,
+  value,
+  low,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  low: boolean;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(low && 'border-warning bg-card')}
+      />
+    </div>
+  );
+}
+
+function DetailPanel({
+  prescription,
+  submitting,
+  onApprove,
+}: {
+  prescription: PendingPrescription;
+  submitting: boolean;
+  onApprove: (structured: StructuredRx) => void;
+}) {
+  const [draft, setDraft] = useState<StructuredRx>(() => ({
+    ...prescription.structured_json,
+    medicines: prescription.structured_json.medicines.map((m) => ({ ...m })),
+  }));
+  const [showRaw, setShowRaw] = useState(false);
+  const [zoom, setZoom] = useState(1);
+
+  const needsAttention =
+    prescription.ocr_confidence !== 'high' || prescription.structured_json.illegible_notes_flag;
+
+  const updateMedicine = (
+    index: number,
+    field: keyof Medicine,
+    value: string,
+  ) => {
+    setDraft((prev) => ({
+      ...prev,
+      medicines: prev.medicines.map((m, i) => (i === index ? { ...m, [field]: value } : m)),
+    }));
+  };
+
+  return (
+    <section className="grid gap-6 xl:grid-cols-2">
+      <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Original prescription
+          </p>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom out"
+              onClick={() => setZoom((z) => Math.max(1, +(z - 0.25).toFixed(2)))}
+            >
+              <ZoomOut className="size-4" />
+            </Button>
+            <span className="w-12 text-center text-xs tabular-nums text-muted-foreground">
+              {Math.round(zoom * 100)}%
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom in"
+              onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))}
+            >
+              <ZoomIn className="size-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="h-[calc(100vh-13rem)] min-h-[420px] overflow-auto p-3">
+          <img
+            src={prescription.image_url}
+            alt={`Prescription submitted by ${prescription.patient_name}`}
+            className="mx-auto w-full origin-top rounded-lg shadow-sm"
+            style={{ transform: `scale(${zoom})` }}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        {needsAttention && (
+          <div className="flex items-start gap-3 rounded-xl border border-warning-border bg-warning-surface p-4">
+            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-warning-foreground" />
+            <div className="text-sm text-warning-foreground">
+              <p className="font-semibold">Extra care required before approving</p>
+              <ul className="mt-1 list-inside list-disc space-y-0.5">
+                {prescription.ocr_confidence !== 'high' && (
+                  <li>
+                    OCR confidence is <strong>{prescription.ocr_confidence}</strong> — verify every
+                    field against the image.
+                  </li>
+                )}
+                {prescription.structured_json.illegible_notes_flag && (
+                  <li>Illegible notes were detected on this prescription.</li>
+                )}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-semibold">{prescription.patient_name}</h2>
+              <p className="text-xs text-muted-foreground">
+                {prescription.patient_phone} · {prescription.language_pref} · submitted{' '}
+                {timeAgo(prescription.created_at)}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              OCR <ConfidenceBadge level={prescription.ocr_confidence} />
+            </div>
+          </div>
+
+          <Separator className="my-4" />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="diagnosis">Diagnosis</Label>
+              <Input
+                id="diagnosis"
+                value={draft.diagnosis ?? ''}
+                onChange={(e) =>
+                  setDraft((p) => ({ ...p, diagnosis: e.target.value || null }))
+                }
+                placeholder="Not extracted — enter from image"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="follow_up">Follow-up date</Label>
+              <Input
+                id="follow_up"
+                type="date"
+                value={draft.follow_up_date ?? ''}
+                onChange={(e) =>
+                  setDraft((p) => ({ ...p, follow_up_date: e.target.value || null }))
+                }
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Medicines ({draft.medicines.length})
+          </h3>
+          <div className="mt-3 space-y-4">
+            {draft.medicines.map((med, index) => {
+              const low = med.confidence === 'low';
+              return (
+                <div
+                  key={index}
+                  className={cn(
+                    'rounded-lg border p-3',
+                    low ? 'border-warning-border bg-warning-surface' : 'border-border bg-background',
+                  )}
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-muted-foreground">
+                      #{index + 1}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {low && (
+                        <span className="flex items-center gap-1 text-xs font-semibold text-warning-foreground">
+                          <AlertTriangle className="size-3.5" />
+                          Low confidence — check against image
+                        </span>
+                      )}
+                      <ConfidenceBadge level={med.confidence} />
+                    </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <FieldInput label="Name" value={med.name} low={low} onChange={(v) => updateMedicine(index, 'name', v)} />
+                    <FieldInput label="Dosage" value={med.dosage} low={low} onChange={(v) => updateMedicine(index, 'dosage', v)} />
+                    <FieldInput label="Frequency" value={med.frequency} low={low} onChange={(v) => updateMedicine(index, 'frequency', v)} />
+                    <FieldInput label="Timing" value={med.timing} low={low} onChange={(v) => updateMedicine(index, 'timing', v)} />
+                    <FieldInput label="Duration" value={med.duration} low={low} onChange={(v) => updateMedicine(index, 'duration', v)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card">
+          <button
+            type="button"
+            onClick={() => setShowRaw((s) => !s)}
+            className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium"
+            aria-expanded={showRaw}
+          >
+            <FileText className="size-4 text-muted-foreground" />
+            Raw OCR text
+            <ChevronDown
+              className={cn(
+                'ml-auto size-4 text-muted-foreground transition-transform',
+                showRaw && 'rotate-180',
+              )}
+            />
+          </button>
+          {showRaw && (
+            <pre className="max-h-64 overflow-auto border-t border-border bg-surface px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
+              {prescription.ocr_raw_text}
+            </pre>
+          )}
+        </div>
+
+        <div className="sticky bottom-0 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4">
+          <p className="mr-auto text-xs text-muted-foreground">
+            Approving activates the patient&apos;s check-in schedule immediately.
+          </p>
+          <Button size="lg" disabled={submitting} onClick={() => onApprove(draft)} className="min-w-48">
+            {submitting ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Activating…
+              </>
+            ) : (
+              <>
+                <ClipboardCheck className="size-4" />
+                Approve &amp; Activate
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function Prescriptions() {
   const { staff } = useAuth();
-  const [items, setItems] = useState<Prescription[] | null>(null);
+  const [queue, setQueue] = useState<PendingPrescription[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<StructuredJson | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const scope = staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide';
+
   useEffect(() => {
+    setLoading(true);
     api
-      .get<{ data: Prescription[] }>('/api/prescriptions/pending')
-      .then((res) => {
-        setItems(res.data);
-        if (res.data.length) {
-          setSelectedId(res.data[0].id);
-          setDraft(res.data[0].structured_json);
-        }
+      .get<{ data: PendingPrescription[] }>('/api/prescriptions/pending')
+      .then((r) => {
+        setQueue(r.data);
+        if (r.data.length > 0 && !selectedId) setSelectedId(r.data[0]!.id);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load'));
+      .catch((e) => setError(e))
+      .finally(() => setLoading(false));
   }, []);
 
-  const selected = items?.find((i) => i.id === selectedId) || null;
+  useEffect(() => {
+    if (queue.length === 0) { setSelectedId(null); return; }
+    if (!selectedId || !queue.some((p) => p.id === selectedId)) {
+      setSelectedId(queue[0]!.id);
+    }
+  }, [queue, selectedId]);
 
-  function selectItem(item: Prescription) {
-    setSelectedId(item.id);
-    setDraft(item.structured_json);
-  }
+  const selected = useMemo(() => queue.find((p) => p.id === selectedId) ?? null, [queue, selectedId]);
 
-  function updateMedicine(idx: number, field: keyof Medicine, value: string) {
-    if (!draft) return;
-    const medicines = draft.medicines.map((m, i) => (i === idx ? { ...m, [field]: value } : m));
-    setDraft({ ...draft, medicines });
-  }
-
-  async function approve() {
-    if (!selected || !draft || !staff) return;
+  async function approve(structured_json: StructuredRx) {
+    if (!selected || !staff) return;
     setSubmitting(true);
-    setError(null);
     try {
       await api.post(`/api/prescriptions/${selected.id}/verify`, {
-        structured_json: draft,
+        structured_json,
         staff_user_id: staff.id,
       });
-      setItems((prev) => {
-        const next = prev ? prev.filter((i) => i.id !== selected.id) : prev;
-        if (next && next.length) {
-          setSelectedId(next[0].id);
-          setDraft(next[0].structured_json);
-        } else {
-          setSelectedId(null);
-          setDraft(null);
-        }
-        return next;
+      const patientName = selected.patient_name;
+      setQueue((prev) => prev.filter((p) => p.id !== selected.id));
+      toast.success('Prescription approved & activated', {
+        description: `Check-in schedule is now active for ${patientName}.`,
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to verify prescription');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Verification failed. Nothing was sent to the patient.');
     } finally {
       setSubmitting(false);
     }
   }
 
+  const query = {
+    data: queue.length > 0 || !loading ? queue : undefined,
+    isPending: loading,
+    isError: !!error,
+    error,
+    refetch: () => {
+      setLoading(true);
+      setError(null);
+      api
+        .get<{ data: PendingPrescription[] }>('/api/prescriptions/pending')
+        .then((r) => setQueue(r.data))
+        .catch((e) => setError(e))
+        .finally(() => setLoading(false));
+    },
+  };
+
   return (
-    <div>
-      <h1 className="text-xl font-semibold mb-4">Prescriptions — Verification Queue</h1>
-      {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
-      {items === null && <p className="text-sm text-slate-500">Loading…</p>}
-      {items && items.length === 0 && (
-        <p className="text-sm text-slate-500 bg-white border border-slate-200 rounded-lg p-6 text-center">
-          Nothing pending verification.
-        </p>
-      )}
-
-      {items && items.length > 0 && (
-        <div className="grid grid-cols-[280px_1fr] gap-4">
-          <div className="space-y-2">
-            {items.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => selectItem(item)}
-                className={`w-full text-left bg-white border rounded-lg p-3 ${
-                  item.id === selectedId ? 'border-teal-600 ring-1 ring-teal-600' : 'border-slate-200'
-                }`}
-              >
-                <p className="text-sm font-medium">{item.patient_name}</p>
-                <p className="text-xs text-slate-500">{item.patient_phone}</p>
-                <span
-                  className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full ${
-                    item.ocr_confidence === 'high'
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-amber-100 text-amber-700'
-                  }`}
-                >
-                  {item.ocr_confidence} confidence
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {selected && draft && (
-            <div className="bg-white border border-slate-200 rounded-lg p-5">
-              <div className="grid grid-cols-2 gap-5 mb-5">
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">Prescription image</p>
-                  <img
-                    src={selected.image_url}
-                    alt="Prescription"
-                    className="w-full rounded-md border border-slate-200 object-contain max-h-96"
-                  />
-                </div>
-                <div>
-                  {(draft.overall_confidence !== 'high' || draft.illegible_notes_flag) && (
-                    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-md p-3 mb-3">
-                      Overall confidence: {draft.overall_confidence}
-                      {draft.illegible_notes_flag ? ' — illegible notes detected' : ''}. Double-check against the image.
-                    </div>
-                  )}
-
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Diagnosis</label>
-                  <input
-                    value={draft.diagnosis || ''}
-                    onChange={(e) => setDraft({ ...draft, diagnosis: e.target.value })}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm mb-3"
-                  />
-
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Follow-up date</label>
-                  <input
-                    value={draft.follow_up_date || ''}
-                    onChange={(e) => setDraft({ ...draft, follow_up_date: e.target.value })}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm mb-3"
-                  />
-
-                  <details className="text-xs text-slate-500">
-                    <summary className="cursor-pointer">Raw OCR text</summary>
-                    <p className="mt-1 whitespace-pre-wrap">{selected.ocr_raw_text}</p>
-                  </details>
-                </div>
-              </div>
-
-              <p className="text-sm font-medium mb-2">Medicines</p>
-              <div className="space-y-2 mb-5">
-                {draft.medicines.map((m, idx) => (
-                  <div
-                    key={idx}
-                    className={`grid grid-cols-5 gap-2 p-2 rounded-md ${
-                      m.confidence === 'low' ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'
-                    }`}
+    <AppShell
+      title="Prescriptions"
+      description={`${scope} — manual verification queue.`}
+      actions={
+        <Badge variant="outline" className="border-border text-muted-foreground">
+          {queue.length} pending
+        </Badge>
+      }
+    >
+      {loading ? (
+        <LoadingState rows={3} label="Loading prescription queue…" />
+      ) : error ? (
+        <ErrorState error={error} onRetry={query.refetch} />
+      ) : queue.length === 0 ? (
+        <EmptyState
+          icon={<ClipboardCheck className="size-6" aria-hidden />}
+          title="Queue cleared"
+          description="No prescriptions awaiting verification."
+        />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+          <aside className="space-y-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Queue — oldest first
+            </h2>
+            <ul className="space-y-2">
+              {queue.map((rx) => (
+                <li key={rx.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(rx.id)}
+                    className={cn(
+                      'w-full rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary/50',
+                      rx.id === selectedId
+                        ? 'border-primary ring-1 ring-primary'
+                        : 'border-border',
+                    )}
                   >
-                    {(['name', 'dosage', 'frequency', 'timing', 'duration'] as const).map((field) => (
-                      <input
-                        key={field}
-                        value={m[field] || ''}
-                        placeholder={field}
-                        onChange={(e) => updateMedicine(idx, field, e.target.value)}
-                        className="border border-slate-300 rounded px-2 py-1 text-xs"
-                      />
-                    ))}
-                  </div>
-                ))}
-              </div>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium leading-tight">{rx.patient_name}</p>
+                      <ConfidenceBadge level={rx.ocr_confidence} />
+                    </div>
+                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <Phone className="size-3" />
+                      {rx.patient_phone}
+                    </p>
+                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="size-3" />
+                      {timeAgo(rx.created_at)} · {rx.language_pref}
+                    </p>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </aside>
 
-              <button
-                onClick={approve}
-                disabled={submitting}
-                className="bg-teal-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
-              >
-                {submitting ? 'Approving…' : 'Approve & Activate'}
-              </button>
-            </div>
+          {selected ? (
+            <DetailPanel
+              key={selected.id}
+              prescription={selected}
+              submitting={submitting}
+              onApprove={approve}
+            />
+          ) : (
+            <section className="flex min-h-[400px] items-center justify-center rounded-xl border border-dashed border-border bg-card">
+              <p className="text-sm text-muted-foreground">
+                Select a prescription from the queue to begin verification.
+              </p>
+            </section>
           )}
         </div>
       )}
-    </div>
+    </AppShell>
   );
 }

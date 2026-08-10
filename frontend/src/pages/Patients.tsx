@@ -1,6 +1,32 @@
-import { useEffect, useState, useCallback } from 'react';
-import { api } from '../lib/api';
-import { useAuth } from '../context/AuthContext';
+import { useEffect, useMemo, useState } from 'react';
+import { Users } from 'lucide-react';
+import { toast } from 'sonner';
+import { AppShell } from '@/components/app/app-shell';
+import { EmptyState, ErrorState, LoadingState } from '@/components/app/states';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useAuth } from '@/context/AuthContext';
+import { api } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
 interface PatientRow {
   id: string;
@@ -14,9 +40,196 @@ interface PatientRow {
 }
 
 interface PatientDetail extends PatientRow {
-  prescriptions: { id: string; created_at: string; ocr_confidence: string; verified_by_staff: boolean }[];
-  checkin_schedules: { id: string; frequency_days: number; next_checkin_at: string; active: boolean }[];
-  conversations: { id: string; direction: string; message_text: string; created_at: string }[];
+  prescriptions: {
+    id: string;
+    created_at: string;
+    ocr_confidence: string;
+    verified_by_staff: boolean;
+  }[];
+  checkin_schedules: {
+    id: string;
+    frequency_days: number;
+    next_checkin_at: string;
+    active: boolean;
+  }[];
+  conversations: {
+    id: string;
+    direction: string;
+    message_text: string;
+    created_at: string;
+  }[];
+}
+
+const LANG_LABELS: Record<string, { label: string; className: string }> = {
+  hi: { label: 'Hindi', className: 'bg-amber-50 text-amber-700 border-amber-200' },
+  pa: { label: 'Punjabi', className: 'bg-orange-50 text-orange-700 border-orange-200' },
+  en: { label: 'English', className: 'bg-sky-50 text-sky-700 border-sky-200' },
+};
+
+function LanguageBadge({ lang }: { lang: string }) {
+  const meta = LANG_LABELS[lang] ?? { label: lang.toUpperCase(), className: 'bg-secondary text-secondary-foreground border-border' };
+  return (
+    <span className={cn('inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium', meta.className)}>
+      {meta.label}
+    </span>
+  );
+}
+
+function fmt(iso: string) {
+  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function PatientDrawer({
+  patient,
+  open,
+  onOpenChange,
+  onKillSwitchChange,
+}: {
+  patient: PatientDetail | null;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onKillSwitchChange: (id: string, active: boolean) => void;
+}) {
+  const [killBusy, setKillBusy] = useState(false);
+
+  if (!patient) return null;
+
+  async function toggleKillSwitch() {
+    if (!patient) return;
+    const next = !patient.kill_switch_active;
+    if (next && !confirm('This will stop all automated check-ins and AI replies to this patient immediately. Clinic staff will need to follow up manually. Continue?')) {
+      return;
+    }
+    setKillBusy(true);
+    try {
+      await api.post(`/api/flags/patients/${patient.id}/kill-switch`, { active: next });
+      onKillSwitchChange(patient.id, next);
+      toast.success(next ? 'Automated messages stopped' : 'Automated messages resumed');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to toggle kill switch');
+    } finally {
+      setKillBusy(false);
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle className="text-2xl">{patient.name}</SheetTitle>
+          <SheetDescription>
+            {patient.phone} · {patient.doctor_name ?? 'No doctor assigned'}
+          </SheetDescription>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <LanguageBadge lang={patient.language_pref} />
+            <Badge variant={patient.consent_given ? 'secondary' : 'outline'}>
+              {patient.consent_given ? 'Consent given' : 'No consent'}
+            </Badge>
+            {patient.kill_switch_active && (
+              <Badge variant="destructive">Kill switch active</Badge>
+            )}
+          </div>
+        </SheetHeader>
+
+        <div className="grid grid-cols-2 gap-4 px-4 pb-4 text-sm">
+          <div>
+            <p className="text-muted-foreground">Enrolled</p>
+            <p className="font-medium">{fmt(patient.created_at)}</p>
+          </div>
+        </div>
+
+        <div className="px-4 pb-4">
+          <button
+            onClick={toggleKillSwitch}
+            disabled={killBusy}
+            className={cn(
+              'w-full rounded-lg py-2.5 text-sm font-semibold transition-colors disabled:opacity-50',
+              patient.kill_switch_active
+                ? 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                : 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+            )}
+          >
+            {killBusy ? '…' : patient.kill_switch_active ? 'Resume automated messages' : 'Activate kill switch'}
+          </button>
+        </div>
+
+        <Separator />
+
+        <Tabs defaultValue="prescriptions" className="p-4">
+          <TabsList className="w-full">
+            <TabsTrigger value="prescriptions">Prescriptions</TabsTrigger>
+            <TabsTrigger value="checkins">Check-in Schedule</TabsTrigger>
+            <TabsTrigger value="history">Conversation History</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="prescriptions" className="mt-4 space-y-3">
+            {patient.prescriptions.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">No prescriptions recorded.</p>
+            ) : (
+              patient.prescriptions.map((rx) => (
+                <div key={rx.id} className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">{new Date(rx.created_at).toLocaleDateString()}</p>
+                    <Badge variant={rx.verified_by_staff ? 'secondary' : 'outline'}>
+                      {rx.verified_by_staff ? 'Verified' : 'Pending verification'}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">OCR confidence: {rx.ocr_confidence}</p>
+                </div>
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="checkins" className="mt-4 space-y-3">
+            {patient.checkin_schedules.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">No check-ins scheduled.</p>
+            ) : (
+              patient.checkin_schedules.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between rounded-lg border border-border p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium">Every {c.frequency_days}d</p>
+                    <p className="text-xs text-muted-foreground">
+                      {c.active ? `Next: ${fmt(c.next_checkin_at)}` : 'Paused'}
+                    </p>
+                  </div>
+                  <Badge variant={c.active ? 'secondary' : 'outline'}>
+                    {c.active ? 'Active' : 'Paused'}
+                  </Badge>
+                </div>
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-4 space-y-3">
+            {patient.conversations.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">No conversation yet.</p>
+            ) : (
+              patient.conversations.map((m) => (
+                <div
+                  key={m.id}
+                  className={cn(
+                    'rounded-lg border border-border p-3',
+                    m.direction === 'inbound' ? 'bg-accent/30' : 'bg-card',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {m.direction}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{fmt(m.created_at)}</p>
+                  </div>
+                  <p className="mt-1 text-sm">{m.message_text}</p>
+                </div>
+              ))
+            )}
+          </TabsContent>
+        </Tabs>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 export default function Patients() {
@@ -24,166 +237,150 @@ export default function Patients() {
   const [patients, setPatients] = useState<PatientRow[] | null>(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<PatientDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [killBusy, setKillBusy] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    if (!staff) return;
-    try {
-      const q = search ? `&search=${encodeURIComponent(search)}` : '';
-      const res = await api.get<{ data: PatientRow[] }>(
-        `/api/patients?role=${staff.role}&staff_id=${staff.id}${q}`
-      );
-      setPatients(res.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load patients');
-    }
-  }, [staff, search]);
+  const scope = staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide';
 
   useEffect(() => {
-    const t = setTimeout(load, 250);
-    return () => clearTimeout(t);
-  }, [load]);
+    if (!staff) return;
+    setLoading(true);
+    const q = search ? `&search=${encodeURIComponent(search)}` : '';
+    api
+      .get<{ data: PatientRow[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}${q}`)
+      .then((r) => setPatients(r.data))
+      .catch((e) => setError(e))
+      .finally(() => setLoading(false));
+  }, [staff, search]);
+
+  const filtered = useMemo(() => {
+    if (!patients) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return patients;
+    const digits = q.replace(/\D/g, '');
+    return patients.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (digits.length > 0 && p.phone.replace(/\D/g, '').includes(digits)),
+    );
+  }, [patients, search]);
 
   async function openPatient(id: string) {
     try {
       const res = await api.get<{ data: PatientDetail }>(`/api/patients/${id}`);
       setSelected(res.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load patient');
+      setDrawerOpen(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load patient');
     }
   }
 
-  async function toggleKillSwitch() {
-    if (!selected) return;
-    const next = !selected.kill_switch_active;
-    if (next && !confirm('This will stop all automated check-ins and AI replies to this patient immediately. Clinic staff will need to follow up manually. Continue?')) {
-      return;
-    }
-    setKillBusy(true);
-    try {
-      await api.post(`/api/flags/patients/${selected.id}/kill-switch`, { active: next });
-      setSelected({ ...selected, kill_switch_active: next });
-      setPatients((prev) => prev?.map((p) => (p.id === selected.id ? { ...p, kill_switch_active: next } : p)) ?? prev);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to toggle kill switch');
-    } finally {
-      setKillBusy(false);
-    }
+  function handleKillSwitchChange(id: string, active: boolean) {
+    setPatients((prev) =>
+      prev ? prev.map((p) => (p.id === id ? { ...p, kill_switch_active: active } : p)) : prev,
+    );
+    if (selected?.id === id) setSelected((prev) => prev ? { ...prev, kill_switch_active: active } : prev);
   }
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold mb-4">Patients</h1>
-      <input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by name or phone…"
-        className="w-full max-w-sm border border-slate-300 rounded-md px-3 py-2 text-sm mb-4"
-      />
-      {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+    <AppShell
+      title="Patients"
+      description={`${scope} — enrolled patients and their latest contact.`}
+      actions={
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or phone…"
+          aria-label="Search patients"
+          className="w-full sm:w-72"
+        />
+      }
+    >
+      {loading && !patients ? (
+        <LoadingState rows={5} label="Loading patients…" />
+      ) : error ? (
+        <ErrorState error={error} />
+      ) : (
+        <>
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Assigned doctor</TableHead>
+                  <TableHead>Language</TableHead>
+                  <TableHead>Consent</TableHead>
+                  <TableHead>Kill switch</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {!patients &&
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <TableRow key={i}>
+                      <TableCell colSpan={6}>
+                        <Skeleton className="h-6 w-full" />
+                      </TableCell>
+                    </TableRow>
+                  ))}
 
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-500 text-left">
-            <tr>
-              <th className="px-4 py-2 font-medium">Name</th>
-              <th className="px-4 py-2 font-medium">Phone</th>
-              <th className="px-4 py-2 font-medium">Doctor</th>
-              <th className="px-4 py-2 font-medium">Language</th>
-              <th className="px-4 py-2 font-medium">Consent</th>
-              <th className="px-4 py-2 font-medium">Kill switch</th>
-            </tr>
-          </thead>
-          <tbody>
-            {patients?.map((p) => (
-              <tr
-                key={p.id}
-                onClick={() => openPatient(p.id)}
-                className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
-              >
-                <td className="px-4 py-2 font-medium">{p.name}</td>
-                <td className="px-4 py-2 text-slate-500">{p.phone}</td>
-                <td className="px-4 py-2 text-slate-500">{p.doctor_name || '—'}</td>
-                <td className="px-4 py-2 uppercase text-slate-500">{p.language_pref}</td>
-                <td className="px-4 py-2">
-                  <span className={p.consent_given ? 'text-green-700' : 'text-amber-700'}>
-                    {p.consent_given ? 'Given' : 'Pending'}
-                  </span>
-                </td>
-                <td className="px-4 py-2">
-                  {p.kill_switch_active && (
-                    <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">Active</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {patients && patients.length === 0 && (
-          <p className="text-sm text-slate-500 p-6 text-center">No patients found.</p>
-        )}
-      </div>
+                {patients && filtered.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                      {search
+                        ? `No patients match "${search}".`
+                        : 'No patients enrolled yet.'}
+                    </TableCell>
+                  </TableRow>
+                )}
 
-      {selected && (
-        <div className="fixed inset-0 bg-black/30 flex justify-end z-20" onClick={() => setSelected(null)}>
-          <div
-            className="w-full max-w-md bg-white h-full overflow-y-auto p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button onClick={() => setSelected(null)} className="text-sm text-slate-500 mb-4">
-              ← Close
-            </button>
-            <h2 className="text-lg font-semibold">{selected.name}</h2>
-            <p className="text-sm text-slate-500 mb-4">{selected.phone} · {selected.doctor_name || 'No doctor assigned'}</p>
-
-            <button
-              onClick={toggleKillSwitch}
-              disabled={killBusy}
-              className={`w-full text-sm font-medium rounded-md py-2 mb-6 disabled:opacity-50 ${
-                selected.kill_switch_active ? 'bg-slate-900 text-white' : 'bg-red-600 text-white'
-              }`}
-            >
-              {killBusy ? '…' : selected.kill_switch_active ? 'Resume automated messages' : 'Activate kill switch'}
-            </button>
-
-            <h3 className="text-sm font-semibold mb-2">Prescriptions</h3>
-            <div className="space-y-1 mb-5">
-              {selected.prescriptions.length === 0 && <p className="text-xs text-slate-400">None yet.</p>}
-              {selected.prescriptions.map((p) => (
-                <div key={p.id} className="text-xs bg-slate-50 rounded p-2 flex justify-between">
-                  <span>{new Date(p.created_at).toLocaleDateString()}</span>
-                  <span>{p.verified_by_staff ? 'Verified' : 'Pending verification'}</span>
-                </div>
-              ))}
-            </div>
-
-            <h3 className="text-sm font-semibold mb-2">Check-in schedule</h3>
-            <div className="space-y-1 mb-5">
-              {selected.checkin_schedules.length === 0 && <p className="text-xs text-slate-400">None yet.</p>}
-              {selected.checkin_schedules.map((s) => (
-                <div key={s.id} className="text-xs bg-slate-50 rounded p-2 flex justify-between">
-                  <span>Every {s.frequency_days}d</span>
-                  <span>{s.active ? `Next: ${new Date(s.next_checkin_at).toLocaleString()}` : 'Paused'}</span>
-                </div>
-              ))}
-            </div>
-
-            <h3 className="text-sm font-semibold mb-2">Conversation history</h3>
-            <div className="space-y-1">
-              {selected.conversations.length === 0 && <p className="text-xs text-slate-400">No messages yet.</p>}
-              {selected.conversations.map((c) => (
-                <div key={c.id} className={`text-xs rounded p-2 ${c.direction === 'inbound' ? 'bg-teal-50' : 'bg-slate-50'}`}>
-                  <p className="text-slate-400 mb-0.5">
-                    {c.direction} · {new Date(c.created_at).toLocaleString()}
-                  </p>
-                  <p>{c.message_text}</p>
-                </div>
-              ))}
-            </div>
+                {filtered.map((p) => (
+                  <TableRow
+                    key={p.id}
+                    tabIndex={0}
+                    role="button"
+                    className="cursor-pointer"
+                    onClick={() => void openPatient(p.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        void openPatient(p.id);
+                      }
+                    }}
+                  >
+                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell className="font-mono text-xs">{p.phone}</TableCell>
+                    <TableCell>{p.doctor_name ?? '—'}</TableCell>
+                    <TableCell>
+                      <LanguageBadge lang={p.language_pref} />
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={p.consent_given ? 'secondary' : 'outline'}>
+                        {p.consent_given ? 'Given' : 'Pending'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {p.kill_switch_active ? (
+                        <Badge variant="destructive">Active</Badge>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Off</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
-        </div>
+
+          <PatientDrawer
+            patient={selected}
+            open={drawerOpen}
+            onOpenChange={setDrawerOpen}
+            onKillSwitchChange={handleKillSwitchChange}
+          />
+        </>
       )}
-    </div>
+    </AppShell>
   );
 }
