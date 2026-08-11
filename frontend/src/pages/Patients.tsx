@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
-import { EmptyState, ErrorState, LoadingState } from '@/components/app/states';
+import { ErrorState, LoadingState } from '@/components/app/states';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   Sheet,
