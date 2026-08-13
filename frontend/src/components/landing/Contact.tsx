@@ -23,10 +23,10 @@ export function Contact() {
     setBusy(true);
     try {
       await api.post('/api/pilot-requests', {
-        name: form.name,
+        contact_name: form.name,
         clinic_name: form.clinic,
-        contact: form.contact,
-        patient_volume: form.patients,
+        contact_info: form.contact,
+        patient_volume_estimate: form.patients,
         message: form.message,
       });
     } catch {
