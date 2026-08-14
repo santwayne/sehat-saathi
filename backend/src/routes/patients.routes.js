@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
+const { sendWhatsAppTemplate } = require('../services/whatsapp.service');
 
 /**
  * GET /api/patients
@@ -129,7 +130,15 @@ router.post('/', async (req, res) => {
         consent_given === true,
       ]
     );
-    return res.status(201).json({ success: true, data: rows[0] });
+    const patient = rows[0];
+
+    // Send welcome template (fire-and-forget — enrollment succeeds even if WA fails)
+    if (patient.consent_given) {
+      sendWhatsAppTemplate(phone, 'patient_welcome', 'en', [patient.name])
+        .catch((err) => console.error('Welcome template failed:', err.message));
+    }
+
+    return res.status(201).json({ success: true, data: patient });
   } catch (error) {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'A patient with this phone number is already enrolled.' });
