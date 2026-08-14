@@ -135,9 +135,13 @@ router.post('/', async (req, res) => {
     );
     const patient = rows[0];
 
-    // Send welcome template (fire-and-forget — enrollment succeeds even if WA fails)
+    // Send welcome template — {{1}} = patient name, {{2}} = clinic name
     if (patient.consent_given) {
-      sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name])
+      pool.query('SELECT name FROM clinics WHERE id = $1', [clinic_id])
+        .then(({ rows: cr }) => {
+          const clinicName = cr[0]?.name || 'your clinic';
+          return sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name, clinicName]);
+        })
         .catch((err) => console.error('Welcome template failed:', err.message));
     }
 
