@@ -4,8 +4,9 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
+// Strip everything except digits — WhatsApp expects e.g. 917087064479 (no +, no spaces)
 function normalizePhone(phone) {
-  return String(phone).replace(/^\+/, '');
+  return String(phone).replace(/\D/g, '');
 }
 
 /**
@@ -95,6 +96,7 @@ async function downloadWhatsAppMedia(mediaId) {
 }
 
 module.exports = {
+  normalizePhone,
   sendWhatsAppMessage,
   sendWhatsAppTemplate,
   downloadWhatsAppMedia,

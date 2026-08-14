@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
-const { downloadWhatsAppMedia, sendWhatsAppMessage } = require('../services/whatsapp.service');
+const { downloadWhatsAppMedia, sendWhatsAppMessage, normalizePhone } = require('../services/whatsapp.service');
 const { processPrescriptionOCR } = require('../services/ocr.service');
 const { processInboundMessage } = require('../services/conversation.service');
 
@@ -32,7 +32,7 @@ router.post('/webhook', async (req, res) => {
 
     if (!message) return;
 
-    const senderPhone = message.from;
+    const senderPhone = normalizePhone(message.from);
     const messageType = message.type;
 
     // Every inbound sender must already exist as an enrolled, consenting patient

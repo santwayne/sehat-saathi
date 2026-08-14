@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
-const { sendWhatsAppTemplate } = require('../services/whatsapp.service');
+const { sendWhatsAppTemplate, normalizePhone } = require('../services/whatsapp.service');
 
 /**
  * GET /api/patients
@@ -117,14 +117,17 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'clinic_id, name, and phone are required.' });
   }
 
+  // Normalize to digits-only so DB matches WhatsApp sender IDs (e.g. "917087064479")
+  const cleanPhone = normalizePhone(phone);
+
   try {
     const { rows } = await pool.query(
       `INSERT INTO patients (clinic_id, name, phone, language_pref, preferred_channel, assigned_doctor_id, consent_given)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
-        clinic_id, name, phone,
-        language_pref || 'hi',
+        clinic_id, name, cleanPhone,
+        language_pref || 'en',
         preferred_channel || 'whatsapp',
         assigned_doctor_id || null,
         consent_given === true,
@@ -134,7 +137,7 @@ router.post('/', async (req, res) => {
 
     // Send welcome template (fire-and-forget — enrollment succeeds even if WA fails)
     if (patient.consent_given) {
-      sendWhatsAppTemplate(phone, 'patient_welcome', 'en', [patient.name])
+      sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name])
         .catch((err) => console.error('Welcome template failed:', err.message));
     }
 
