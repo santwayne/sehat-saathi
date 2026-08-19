@@ -53,4 +53,27 @@ router.post('/', requireRole('admin'), async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/doctors/:id
+ * Removes a doctor record. Any patient currently assigned to this doctor
+ * keeps their record — assigned_doctor_id falls back to NULL via the
+ * existing ON DELETE SET NULL foreign key (schema.sql), it just shows as
+ * unassigned rather than being blocked or cascaded away. Admin-only,
+ * matching POST above.
+ */
+router.delete('/:id', requireRole('admin'), async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { rows } = await pool.query('DELETE FROM doctors WHERE id = $1 RETURNING id', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Doctor not found.' });
+    }
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete doctor:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

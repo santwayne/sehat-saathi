@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { sendWhatsAppTemplate, normalizePhone, isValidPhone } = require('../services/whatsapp.service');
+const { requireRole } = require('../services/auth.service');
 
 /**
  * GET /api/patients
@@ -168,6 +169,97 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ error: 'A patient with this phone number is already enrolled.' });
     }
     console.error('Failed to enroll patient:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * PATCH /api/patients/:id
+ * Edits an already-enrolled patient's details. Previously nothing in the
+ * API surface allowed this at all (Bugs 2 & 3) — a typo'd name/phone, a
+ * wrong language, or a wrong assigned doctor picked at enrollment was
+ * permanent from the UI's perspective. Only touches fields actually sent,
+ * so a partial edit (e.g. just reassigning the doctor) doesn't require
+ * resending the whole record.
+ */
+router.patch('/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, phone, language_pref, preferred_channel, assigned_doctor_id } = req.body;
+
+  const setClauses = [];
+  const values = [];
+  let i = 1;
+
+  if (name !== undefined) {
+    if (!name.trim()) return res.status(400).json({ error: 'Name cannot be empty.' });
+    setClauses.push(`name = $${i++}`);
+    values.push(name);
+  }
+  if (phone !== undefined) {
+    const cleanPhone = normalizePhone(phone);
+    if (!isValidPhone(cleanPhone)) {
+      return res.status(400).json({ error: 'Enter a valid WhatsApp number, including country code (e.g. +919876543210).' });
+    }
+    setClauses.push(`phone = $${i++}`);
+    values.push(cleanPhone);
+  }
+  if (language_pref !== undefined) {
+    setClauses.push(`language_pref = $${i++}`);
+    values.push(language_pref);
+  }
+  if (preferred_channel !== undefined) {
+    setClauses.push(`preferred_channel = $${i++}`);
+    values.push(preferred_channel);
+  }
+  if (assigned_doctor_id !== undefined) {
+    setClauses.push(`assigned_doctor_id = $${i++}`);
+    values.push(assigned_doctor_id || null);
+  }
+
+  if (setClauses.length === 0) {
+    return res.status(400).json({ error: 'No fields provided to update.' });
+  }
+
+  values.push(id);
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE patients SET ${setClauses.join(', ')} WHERE id = $${i} RETURNING *`,
+      values
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found.' });
+    }
+    return res.status(200).json({ success: true, data: rows[0] });
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'Another patient is already enrolled with this phone number.' });
+    }
+    console.error('Failed to update patient:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * DELETE /api/patients/:id
+ * Permanently removes a patient. Conversations, flags, prescriptions, and
+ * check-in schedules all cascade via existing ON DELETE CASCADE foreign
+ * keys (schema.sql) — no orphaned rows left behind. Admin-only: this is
+ * destructive and unlike PATCH can't be corrected by editing again, so it
+ * gets the same requireRole('admin') gate as creating staff/doctor
+ * accounts, rather than the open access enrollment itself uses.
+ */
+router.delete('/:id', requireRole('admin'), async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { rows } = await pool.query('DELETE FROM patients WHERE id = $1 RETURNING id', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found.' });
+    }
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete patient:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
