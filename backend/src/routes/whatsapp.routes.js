@@ -3,7 +3,8 @@ const router = express.Router();
 const { pool } = require('../db');
 const { downloadWhatsAppMedia, sendWhatsAppMessage, normalizePhone } = require('../services/whatsapp.service');
 const { processPrescriptionOCR } = require('../services/ocr.service');
-const { processInboundMessage } = require('../services/conversation.service');
+const { processInboundMessage, logConversation } = require('../services/conversation.service');
+const { createEscalationFlag } = require('../services/escalation.service');
 
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 
@@ -38,7 +39,7 @@ router.post('/webhook', async (req, res) => {
     // Every inbound sender must already exist as an enrolled, consenting patient
     // (Section 6.3: explicit consent capture happens via the clinic dashboard, not over WhatsApp).
     const patientRes = await pool.query(
-      'SELECT id, language_pref, kill_switch_active FROM patients WHERE phone = $1',
+      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id FROM patients WHERE phone = $1',
       [senderPhone]
     );
     const patient = patientRes.rows[0];
@@ -55,10 +56,44 @@ router.post('/webhook', async (req, res) => {
 
     // Handle incoming image (prescription photo sent by patient or staff)
     if (messageType === 'image') {
-      const mediaId = message.image.id;
-      const { base64Image, mimeType, mediaUrl } = await downloadWhatsAppMedia(mediaId);
+      // Log the inbound message BEFORE attempting download/OCR (matching the
+      // text branch's own "log first, process after" pattern below) — this
+      // was previously missing entirely for images, so a patient's
+      // Conversation History showed nothing even when a photo was received
+      // and even when processing later succeeded (Bug 1 in the QA report).
+      const inboundConversationId = await logConversation(patient.id, 'inbound', '[Prescription photo received]', 'prescription_image');
 
-      // Trigger OCR service
+      const mediaId = message.image.id;
+      let downloaded;
+      try {
+        downloaded = await downloadWhatsAppMedia(mediaId);
+      } catch (err) {
+        // Media download can fail independently of OCR (expired token, media
+        // ID no longer valid, network error) — image_url is NOT NULL on
+        // prescriptions, so there's no row we can safely insert here. Raise
+        // a flag instead so staff know a photo arrived and needs manual
+        // follow-up, rather than the message vanishing with only a server
+        // log line no one will see.
+        console.error('Failed to download WhatsApp media:', err.message);
+        await createEscalationFlag({
+          patientId: patient.id,
+          conversationId: inboundConversationId,
+          flagType: 'ocr_low_confidence',
+          priority: 'normal',
+          assignedDoctorId: patient.assigned_doctor_id,
+          reason: `Prescription photo received but could not be downloaded from WhatsApp: ${err.message}`,
+        });
+        await sendWhatsAppMessage(
+          senderPhone,
+          'Thank you. We received your prescription image but had trouble processing it — our team has been notified and will follow up.'
+        );
+        return;
+      }
+      const { base64Image, mimeType, mediaUrl } = downloaded;
+
+      // Trigger OCR service — never throws now (see ocr.service.js), always
+      // returns a safe fail-safe result on failure, so no separate
+      // try/catch is needed here.
       const ocrResult = await processPrescriptionOCR(base64Image, mimeType);
 
       // Persist immediately with verified_by_staff = false — nothing derived from this

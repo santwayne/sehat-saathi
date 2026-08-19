@@ -168,4 +168,4 @@ Patient Message: "${messageText}"
   return { replyText: parsedResponse.reply_text, flagged: false };
 }
 
-module.exports = { processInboundMessage };
+module.exports = { processInboundMessage, logConversation };

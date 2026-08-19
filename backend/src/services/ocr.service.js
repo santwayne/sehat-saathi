@@ -40,30 +40,48 @@ Output MUST follow this exact JSON schema:
  * @param {string} mediaType - MIME type (e.g. 'image/jpeg', 'image/png')
  */
 async function processPrescriptionOCR(imageBase64, mediaType = 'image/jpeg') {
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-5',
-    max_tokens: 1500,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: mediaType,
-              data: imageBase64,
+  // The whole call — not just the JSON.parse below — is now wrapped in the
+  // fail-safe. Previously an API-level failure (model retirement, rate
+  // limit, network error) threw out of this function entirely, past the
+  // caller's own try/catch, and the prescription was lost with nothing
+  // written to the DB and nothing surfaced to staff (see Bug 1 in the QA
+  // report). Every path through this function now returns a safe result
+  // the caller can always insert as a prescriptions row.
+  let response;
+  try {
+    response = await anthropic.messages.create({
+      model: 'claude-sonnet-5',
+      max_tokens: 1500,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mediaType,
+                data: imageBase64,
+              },
             },
-          },
-          {
-            type: 'text',
-            text: 'Extract the prescription details from this image according to the system instructions.',
-          },
-        ],
-      },
-    ],
-  });
+            {
+              type: 'text',
+              text: 'Extract the prescription details from this image according to the system instructions.',
+            },
+          ],
+        },
+      ],
+    });
+  } catch (err) {
+    console.error('OCR API call failed:', err.message);
+    return {
+      rawText: `[OCR request failed: ${err.message}]`,
+      structuredData: null,
+      ocrConfidence: 'low',
+      requiresVerification: true,
+    };
+  }
 
   const responseText = response.content[0].text;
 
