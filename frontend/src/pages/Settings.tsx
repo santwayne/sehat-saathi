@@ -49,7 +49,7 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-const emptyStaff = { name: '', phone: '', role: 'coordinator', password: '' };
+const emptyStaff = { name: '', phone: '', role: 'coordinator', password: '', specialty: '' };
 const emptyDoctor = { name: '', specialty: '' };
 
 function AddStaffSheet({
@@ -57,11 +57,13 @@ function AddStaffSheet({
   onOpenChange,
   clinicId,
   onAdded,
+  onDoctorAdded,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   clinicId: string;
   onAdded: (s: StaffRow) => void;
+  onDoctorAdded: (d: DoctorRow) => void;
 }) {
   const [form, setForm] = useState(emptyStaff);
   const [busy, setBusy] = useState(false);
@@ -85,6 +87,38 @@ function AddStaffSheet({
         password: form.password,
       });
       onAdded(res.data);
+
+      // Bug 4 fix: a staff account with Role = Doctor used to be a
+      // completely separate, unlinked concept from the Doctors list that
+      // actually populates the "Assigned doctor" dropdown on patient
+      // enrollment — an admin had to separately re-enter the same person
+      // under Settings → Doctors with a different (specialty-only) form,
+      // and the two records had no link back to each other at all. The
+      // backend already supported linking via doctors.staff_user_id /
+      // POST /api/doctors' staff_user_id field — nothing on the frontend
+      // ever called it. Now it does, automatically, right after the staff
+      // account is created.
+      if (form.role === 'doctor') {
+        try {
+          const docRes = await api.post<{ data: DoctorRow }>('/api/doctors', {
+            clinic_id: clinicId,
+            name: form.name,
+            specialty: form.specialty || undefined,
+            staff_user_id: res.data.id,
+          });
+          onDoctorAdded(docRes.data);
+        } catch (docErr) {
+          // The staff login itself was created successfully — don't fail
+          // the whole flow over the linked Doctors-list entry. Surface it
+          // so the admin knows to add it manually via "Add doctor" instead.
+          toast.error(
+            docErr instanceof Error
+              ? `Staff account created, but adding "${form.name}" to the Doctors list failed: ${docErr.message}`
+              : 'Staff account created, but adding to the Doctors list failed — add manually via "Add doctor".',
+          );
+        }
+      }
+
       setForm(emptyStaff);
       onOpenChange(false);
     } catch (e) {
@@ -135,6 +169,20 @@ function AddStaffSheet({
               <option value="admin">Administrator</option>
             </select>
           </div>
+          {form.role === 'doctor' && (
+            <div className="space-y-2">
+              <Label htmlFor="sSpecialty">Specialty</Label>
+              <Input
+                id="sSpecialty"
+                value={form.specialty}
+                onChange={update('specialty')}
+                placeholder="Cardiology, Diabetology…"
+              />
+              <p className="text-xs text-muted-foreground">
+                This account will be added to the assignable Doctors list automatically.
+              </p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="sPassword">Temporary password</Label>
             <Input
@@ -326,6 +374,7 @@ export default function Settings() {
             onOpenChange={setAddStaffOpen}
             clinicId={staff.clinic_id}
             onAdded={(s) => setStaffList((prev) => [s, ...(prev ?? [])])}
+            onDoctorAdded={(d) => setDoctors((prev) => [d, ...(prev ?? [])])}
           />
           <AddDoctorSheet
             open={addDoctorOpen}
