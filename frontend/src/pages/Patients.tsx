@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { UserPlus } from 'lucide-react';
+import { Pencil, Trash2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
 import { ErrorState, LoadingState } from '@/components/app/states';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +45,7 @@ interface PatientRow {
   language_pref: string;
   consent_given: boolean;
   kill_switch_active: boolean;
+  assigned_doctor_id: string | null;
   doctor_name: string | null;
   created_at: string;
 }
@@ -204,18 +215,126 @@ function AddPatientSheet({
   );
 }
 
+// Bugs 2 & 3 fix: inline edit form replacing the drawer header's read-only
+// name/phone/language/doctor display. Kept inline (not a nested sheet) so
+// it doesn't stack a second overlay on top of the drawer that's already open.
+function EditPatientForm({
+  patient,
+  doctors,
+  onSaved,
+  onCancel,
+}: {
+  patient: PatientDetail;
+  doctors: DoctorRow[];
+  onSaved: (p: PatientRow) => void;
+  onCancel: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: patient.name,
+    phone: patient.phone,
+    language_pref: patient.language_pref,
+    assigned_doctor_id: patient.assigned_doctor_id ?? '',
+  });
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!form.name.trim()) return toast.error('Name cannot be empty.');
+    const digits = form.phone.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 15) {
+      return toast.error('Enter a valid WhatsApp number, including country code (e.g. +919876543210).');
+    }
+    setBusy(true);
+    try {
+      const res = await api.patch<{ data: PatientRow }>(`/api/patients/${patient.id}`, {
+        name: form.name,
+        phone: form.phone,
+        language_pref: form.language_pref,
+        assigned_doctor_id: form.assigned_doctor_id || null,
+      });
+      onSaved(res.data);
+      toast.success('Patient details updated');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update patient');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 px-4 pb-4">
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">Full name</label>
+        <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+      </div>
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">WhatsApp number</label>
+        <Input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} inputMode="tel" />
+      </div>
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">Language preference</label>
+        <select
+          value={form.language_pref}
+          onChange={(e) => setForm((f) => ({ ...f, language_pref: e.target.value }))}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="hi">Hindi</option>
+          <option value="pa">Punjabi</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">Assigned doctor</label>
+        <select
+          value={form.assigned_doctor_id}
+          onChange={(e) => setForm((f) => ({ ...f, assigned_doctor_id: e.target.value }))}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="">— None —</option>
+          {doctors.map((d) => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button onClick={() => void save()} disabled={busy} className="flex-1">
+          {busy ? 'Saving…' : 'Save changes'}
+        </Button>
+        <Button variant="outline" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function PatientDrawer({
   patient,
   open,
   onOpenChange,
+  doctors,
   onKillSwitchChange,
+  onUpdated,
+  onDeleted,
 }: {
   patient: PatientDetail | null;
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  doctors: DoctorRow[];
   onKillSwitchChange: (id: string, active: boolean) => void;
+  onUpdated: (p: PatientRow) => void;
+  onDeleted: (id: string) => void;
 }) {
+  const { staff } = useAuth();
   const [killBusy, setKillBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  // Reset edit mode whenever a different patient (or none) is shown, so
+  // reopening the drawer on another row never lands mid-edit.
+  useEffect(() => {
+    setEditing(false);
+  }, [patient?.id]);
 
   if (!patient) return null;
 
@@ -237,25 +356,64 @@ function PatientDrawer({
     }
   }
 
+  async function deletePatient() {
+    if (!patient) return;
+    setDeleteBusy(true);
+    try {
+      await api.delete(`/api/patients/${patient.id}`);
+      setDeleteOpen(false);
+      onDeleted(patient.id);
+      toast.success(`${patient.name} removed`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete patient');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-xl">
         <SheetHeader>
-          <SheetTitle className="text-2xl">{patient.name}</SheetTitle>
-          <SheetDescription>
-            {patient.phone} · {patient.doctor_name ?? 'No doctor assigned'}
-          </SheetDescription>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <LanguageBadge lang={patient.language_pref} />
-            <Badge variant={patient.consent_given ? 'secondary' : 'outline'}>
-              {patient.consent_given ? 'Consent given' : 'No consent'}
-            </Badge>
-            {patient.kill_switch_active && (
-              <Badge variant="destructive">Kill switch active</Badge>
+          <div className="flex items-start justify-between gap-3">
+            <SheetTitle className="text-2xl">{patient.name}</SheetTitle>
+            {!editing && (
+              <Button variant="outline" size="sm" onClick={() => setEditing(true)} className="shrink-0">
+                <Pencil className="mr-1.5 size-3.5" />
+                Edit
+              </Button>
             )}
           </div>
+          {!editing && (
+            <>
+              <SheetDescription>
+                {patient.phone} · {patient.doctor_name ?? 'No doctor assigned'}
+              </SheetDescription>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <LanguageBadge lang={patient.language_pref} />
+                <Badge variant={patient.consent_given ? 'secondary' : 'outline'}>
+                  {patient.consent_given ? 'Consent given' : 'No consent'}
+                </Badge>
+                {patient.kill_switch_active && (
+                  <Badge variant="destructive">Kill switch active</Badge>
+                )}
+              </div>
+            </>
+          )}
         </SheetHeader>
 
+        {editing ? (
+          <EditPatientForm
+            patient={patient}
+            doctors={doctors}
+            onCancel={() => setEditing(false)}
+            onSaved={(p) => {
+              onUpdated(p);
+              setEditing(false);
+            }}
+          />
+        ) : (
+          <>
         <div className="grid grid-cols-2 gap-4 px-4 pb-4 text-sm">
           <div>
             <p className="text-muted-foreground">Enrolled</p>
@@ -277,6 +435,41 @@ function PatientDrawer({
             {killBusy ? '…' : patient.kill_switch_active ? 'Resume automated messages' : 'Activate kill switch'}
           </button>
         </div>
+
+        {/* Related gap fix: no delete existed anywhere for a patient record.
+            Admin-only in the UI too, matching the backend's requireRole('admin')
+            gate — a non-admin never even sees the option, rather than seeing
+            it and hitting a 403. */}
+        {staff?.role === 'admin' && (
+          <div className="px-4 pb-4">
+            <Button variant="destructive" className="w-full" onClick={() => setDeleteOpen(true)}>
+              <Trash2 className="mr-1.5 size-3.5" />
+              Delete patient
+            </Button>
+          </div>
+        )}
+
+        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {patient.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This permanently removes the patient record along with their prescriptions,
+                check-in schedule, and conversation history. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => { e.preventDefault(); void deletePatient(); }}
+                disabled={deleteBusy}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleteBusy ? 'Deleting…' : 'Delete permanently'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Separator />
 
@@ -341,6 +534,8 @@ function PatientDrawer({
             )}
           </TabsContent>
         </Tabs>
+          </>
+        )}
       </SheetContent>
     </Sheet>
   );
@@ -409,6 +604,25 @@ export default function Patients() {
 
   function handlePatientAdded(p: PatientRow) {
     setPatients((prev) => (prev ? [p, ...prev] : [p]));
+  }
+
+  // PATCH /api/patients/:id returns the raw patients row (RETURNING *) —
+  // it doesn't re-join doctors.name the way GET /api/patients does, so
+  // doctor_name has to be resolved locally from the doctors list already
+  // loaded on this page rather than trusted from the response as-is.
+  function handlePatientUpdated(p: PatientRow) {
+    const doctor_name = p.assigned_doctor_id
+      ? doctors.find((d) => d.id === p.assigned_doctor_id)?.name ?? null
+      : null;
+    const merged = { ...p, doctor_name };
+    setPatients((prev) => (prev ? prev.map((row) => (row.id === merged.id ? merged : row)) : prev));
+    setSelected((prev) => (prev && prev.id === merged.id ? { ...prev, ...merged } : prev));
+  }
+
+  function handlePatientDeleted(id: string) {
+    setPatients((prev) => (prev ? prev.filter((p) => p.id !== id) : prev));
+    setDrawerOpen(false);
+    setSelected(null);
   }
 
   return (
@@ -507,7 +721,10 @@ export default function Patients() {
             patient={selected}
             open={drawerOpen}
             onOpenChange={setDrawerOpen}
+            doctors={doctors}
             onKillSwitchChange={handleKillSwitchChange}
+            onUpdated={handlePatientUpdated}
+            onDeleted={handlePatientDeleted}
           />
 
           <AddPatientSheet
