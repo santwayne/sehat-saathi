@@ -39,13 +39,23 @@ router.post('/webhook', async (req, res) => {
     // Every inbound sender must already exist as an enrolled, consenting patient
     // (Section 6.3: explicit consent capture happens via the clinic dashboard, not over WhatsApp).
     const patientRes = await pool.query(
-      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id FROM patients WHERE phone = $1',
+      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id, consent_given FROM patients WHERE phone = $1',
       [senderPhone]
     );
     const patient = patientRes.rows[0];
 
     if (!patient) {
       console.log(`Message from unregistered number ${senderPhone} ignored.`);
+      return;
+    }
+
+    // Defense-in-depth for Bug 5: enrollment now requires consent_given
+    // (see patients.routes.js), so this should be unreachable for any
+    // newly-enrolled patient — kept as a second gate in case a
+    // pre-existing row without consent is still in the DB, so this stays
+    // provably safe rather than relying solely on the enrollment-time check.
+    if (!patient.consent_given) {
+      console.log(`Message from ${senderPhone} ignored: consent not on file.`);
       return;
     }
 

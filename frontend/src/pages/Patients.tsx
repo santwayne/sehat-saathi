@@ -106,6 +106,14 @@ function AddPatientSheet({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Bug 5 fix: the form's own copy already said consent was required —
+    // it just wasn't actually enforced. The backend now rejects this too
+    // (defense-in-depth), but blocking here gives an immediate, specific
+    // error instead of a round-trip failure.
+    if (!form.consent_given) {
+      toast.error('Patient consent is required before enrollment.');
+      return;
+    }
     setBusy(true);
     try {
       const res = await api.post<{ data: PatientRow }>('/api/patients', {

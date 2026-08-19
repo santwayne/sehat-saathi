@@ -48,7 +48,7 @@ async function processInboundMessage(patientId, messageText) {
   // 1. Fetch patient details and active prescription
   const patientQuery = `
     SELECT
-      p.id, p.phone, p.language_pref, p.kill_switch_active, p.assigned_doctor_id,
+      p.id, p.phone, p.language_pref, p.kill_switch_active, p.consent_given, p.assigned_doctor_id,
       pr.structured_json
     FROM patients p
     LEFT JOIN prescriptions pr ON pr.patient_id = p.id AND pr.verified_by_staff = true
@@ -58,8 +58,12 @@ async function processInboundMessage(patientId, messageText) {
   const { rows } = await pool.query(patientQuery, [patientId]);
   const patient = rows[0];
 
-  if (!patient || patient.kill_switch_active) {
-    console.log(`Message ignored for patient ${patientId}: Kill switch active or patient not found.`);
+  // Same defense-in-depth as whatsapp.routes.js's webhook handler (Bug 5) —
+  // scheduler.service.js already gated its own outbound check-ins on
+  // consent_given; this was the one remaining automated-reply path that
+  // didn't.
+  if (!patient || patient.kill_switch_active || !patient.consent_given) {
+    console.log(`Message ignored for patient ${patientId}: kill switch active, consent missing, or patient not found.`);
     return null;
   }
 

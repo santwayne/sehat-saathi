@@ -117,6 +117,16 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'clinic_id, name, and phone are required.' });
   }
 
+  // Bug 5 fix: this was previously only captured, never enforced — a
+  // submission with the consent checkbox left unticked was enrolled
+  // successfully anyway (consent_given === true simply evaluated to false
+  // and got silently stored as-is). The form's own copy already promises
+  // "Patient must give verbal consent before being enrolled"; now it's
+  // actually blocked here the same way a missing name/phone already is.
+  if (consent_given !== true) {
+    return res.status(400).json({ error: 'Patient consent must be given before enrollment.' });
+  }
+
   // Normalize to digits-only so DB matches WhatsApp sender IDs (e.g. "917087064479")
   const cleanPhone = normalizePhone(phone);
 
