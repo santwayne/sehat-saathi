@@ -41,7 +41,7 @@ Output MUST follow this exact JSON schema:
  */
 async function processPrescriptionOCR(imageBase64, mediaType = 'image/jpeg') {
   const response = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'claude-sonnet-5',
     max_tokens: 1500,
     system: SYSTEM_PROMPT,
     messages: [
