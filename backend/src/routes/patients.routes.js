@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
-const { sendWhatsAppTemplate, normalizePhone } = require('../services/whatsapp.service');
+const { sendWhatsAppTemplate, normalizePhone, isValidPhone } = require('../services/whatsapp.service');
 
 /**
  * GET /api/patients
@@ -129,6 +129,13 @@ router.post('/', async (req, res) => {
 
   // Normalize to digits-only so DB matches WhatsApp sender IDs (e.g. "917087064479")
   const cleanPhone = normalizePhone(phone);
+
+  // Bug 6 fix: previously any non-empty string reached here and got
+  // enrolled (e.g. "12345") — no format check existed at all. Checked
+  // after normalization, before the duplicate-number check (unchanged).
+  if (!isValidPhone(cleanPhone)) {
+    return res.status(400).json({ error: 'Enter a valid WhatsApp number, including country code (e.g. +919876543210).' });
+  }
 
   try {
     const { rows } = await pool.query(

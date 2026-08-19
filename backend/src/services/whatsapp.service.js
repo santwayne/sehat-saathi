@@ -9,6 +9,17 @@ function normalizePhone(phone) {
   return String(phone).replace(/\D/g, '');
 }
 
+// Bug 6 fix: nothing previously checked that a "WhatsApp number" was
+// actually phone-shaped — any non-empty, not-already-used string (e.g.
+// "12345") was accepted and enrolled permanently. E.164 numbers are at
+// most 15 digits; 10 is the shortest plausible number including a country
+// code (e.g. a US number with no leading '1'). This intentionally doesn't
+// try to validate per-country length/prefix rules — just rejects
+// obviously-not-a-phone-number input, on the already-normalized digits.
+function isValidPhone(digitsOnly) {
+  return /^\d{10,15}$/.test(digitsOnly);
+}
+
 /**
  * Send text message via WhatsApp API (only valid as a reply within a 24h customer window)
  */
@@ -97,6 +108,7 @@ async function downloadWhatsAppMedia(mediaId) {
 
 module.exports = {
   normalizePhone,
+  isValidPhone,
   sendWhatsAppMessage,
   sendWhatsAppTemplate,
   downloadWhatsAppMedia,

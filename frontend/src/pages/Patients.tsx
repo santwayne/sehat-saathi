@@ -114,6 +114,12 @@ function AddPatientSheet({
       toast.error('Patient consent is required before enrollment.');
       return;
     }
+    // Bug 6 fix: mirrors the backend's isValidPhone check (10-15 digits
+    // after stripping non-digits) — same reasoning, see whatsapp.service.js.
+    if (form.phone.replace(/\D/g, '').length < 10 || form.phone.replace(/\D/g, '').length > 15) {
+      toast.error('Enter a valid WhatsApp number, including country code (e.g. +919876543210).');
+      return;
+    }
     setBusy(true);
     try {
       const res = await api.post<{ data: PatientRow }>('/api/patients', {
