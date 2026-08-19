@@ -1,9 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { UserPlus, Stethoscope } from 'lucide-react';
+import { Trash2, UserPlus, Stethoscope } from 'lucide-react';
+import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
 import { ErrorState, LoadingState } from '@/components/app/states';
 import { useAuth } from '@/context/AuthContext';
 import { api, API_BASE } from '@/lib/api';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -225,6 +236,62 @@ function AddDoctorSheet({
   );
 }
 
+// Related gap fix: no delete existed anywhere for a doctor record. A patient
+// assigned to the deleted doctor keeps their own record — DELETE
+// /api/doctors/:id relies on the existing ON DELETE SET NULL foreign key,
+// they just show as unassigned afterward.
+function DeleteDoctorButton({ doctor, onDeleted }: { doctor: DoctorRow; onDeleted: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function remove() {
+    setBusy(true);
+    try {
+      await api.delete(`/api/doctors/${doctor.id}`);
+      setOpen(false);
+      onDeleted(doctor.id);
+      toast.success(`${doctor.name} removed`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete doctor');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        aria-label={`Delete ${doctor.name}`}
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {doctor.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Any patient currently assigned to {doctor.name} keeps their own record — they'll just show
+              as unassigned afterward. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); void remove(); }}
+              disabled={busy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {busy ? 'Removing…' : 'Remove doctor'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
 export default function Settings() {
   const { staff } = useAuth();
   const [staffList, setStaffList] = useState<StaffRow[] | null>(null);
@@ -359,14 +426,21 @@ export default function Settings() {
                     <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                       <tr>
                         <th className="pb-2 pr-6 font-medium">Name</th>
-                        <th className="pb-2 font-medium">Specialty</th>
+                        <th className="pb-2 pr-6 font-medium">Specialty</th>
+                        <th className="pb-2 font-medium" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {doctors.map((d) => (
                         <tr key={d.id}>
                           <td className="py-2.5 pr-6 font-medium text-foreground">{d.name}</td>
-                          <td className="py-2.5 text-muted-foreground">{d.specialty ?? '—'}</td>
+                          <td className="py-2.5 pr-6 text-muted-foreground">{d.specialty ?? '—'}</td>
+                          <td className="py-2.5 text-right">
+                            <DeleteDoctorButton
+                              doctor={d}
+                              onDeleted={(id) => setDoctors((prev) => prev?.filter((row) => row.id !== id) ?? prev)}
+                            />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
