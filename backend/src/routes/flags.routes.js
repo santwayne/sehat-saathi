@@ -23,7 +23,10 @@ router.get('/', async (req, res) => {
     `;
     const params = [status];
 
-    if (role === 'super_admin') {
+    // Authorization must come from the verified JWT (req.user), never the
+    // client-supplied ?role= query param — otherwise anyone could pass
+    // ?role=super_admin to bypass clinic scoping entirely.
+    if (req.user?.role === 'super_admin') {
       // No clinic filter by default — accept ?clinic_id= to view one clinic specifically.
       if (clinic_id) {
         params.push(clinic_id);
