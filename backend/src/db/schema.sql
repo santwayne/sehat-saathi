@@ -116,6 +116,23 @@ CREATE TABLE flags (
   resolved_at TIMESTAMP WITH TIME ZONE
 );
 
+-- Doctor Match Log Table (QR self-enrollment spec, Section 8.1)
+-- Every automatic doctor-match attempt (from OCR or voice) and every staff
+-- correction of one gets logged here — the audit trail the alias table below
+-- is built from. Defined before pending_enrollments since that table
+-- references it.
+CREATE TABLE doctor_match_log (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  patient_id UUID REFERENCES patients(id) ON DELETE SET NULL,
+  source VARCHAR(10) CHECK (source IN ('ocr', 'voice')),
+  raw_input TEXT NOT NULL,
+  matched_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  match_confidence VARCHAR(10),
+  staff_corrected_to UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Pending Enrollments Table (QR self-enrollment spec, Section 4.1)
 -- A row here is a patient who scanned the hospital QR and has started but not
 -- finished self-enrolling over WhatsApp. Deliberately separate from `patients`
@@ -131,6 +148,19 @@ CREATE TABLE pending_enrollments (
   name VARCHAR(255),
   language_pref VARCHAR(5),
   consent_given BOOLEAN DEFAULT false,
+  -- Set while stage = 'awaiting_doctor_signal' and the matching engine found a
+  -- low-confidence best guess that needs a Yes/No confirmation from the
+  -- patient before it's trusted (Section 6.4). Not part of the spec's literal
+  -- stage list, but needed to track which doctor a pending "is that right?"
+  -- reply refers to, and which doctor_match_log row to attach the outcome to.
+  candidate_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  candidate_match_log_id UUID REFERENCES doctor_match_log(id) ON DELETE SET NULL,
+  -- A prescription/report photo sent before the doctor match is confirmed is
+  -- saved immediately with patient_id NULL (allowed — see prescriptions
+  -- table above) so it isn't lost; this points at that row so it can be
+  -- attached to the patient once enrollment completes, even if completion
+  -- happens later via a text Yes/No reply rather than the image itself.
+  candidate_document_id UUID REFERENCES prescriptions(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (clinic_id, phone)
 );
@@ -148,22 +178,6 @@ CREATE TABLE doctor_aliases (
   learned_from VARCHAR(20) CHECK (learned_from IN ('staff_correction', 'confirmed_match')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (doctor_id, alias)
-);
-
--- Doctor Match Log Table (QR self-enrollment spec, Section 8.1)
--- Every automatic doctor-match attempt (from OCR or voice) and every staff
--- correction of one gets logged here — the audit trail the alias table above
--- is built from.
-CREATE TABLE doctor_match_log (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
-  patient_id UUID REFERENCES patients(id) ON DELETE SET NULL,
-  source VARCHAR(10) CHECK (source IN ('ocr', 'voice')),
-  raw_input TEXT NOT NULL,
-  matched_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
-  match_confidence VARCHAR(10),
-  staff_corrected_to UUID REFERENCES doctors(id) ON DELETE SET NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Pilot Requests Table (public marketing site "Request a Pilot" form submissions)

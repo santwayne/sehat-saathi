@@ -22,6 +22,18 @@ ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS document_type VARCHAR(20) NOT
 ALTER TABLE flags DROP CONSTRAINT IF EXISTS flags_flag_type_check;
 ALTER TABLE flags ADD CONSTRAINT flags_flag_type_check CHECK (flag_type IN ('missed_dose', 'symptom_reported', 'unanswerable_question', 'no_show_risk', 'ocr_low_confidence', 'doctor_match_failed', 'doctor_match_conflict'));
 
+CREATE TABLE IF NOT EXISTS doctor_match_log (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  patient_id UUID REFERENCES patients(id) ON DELETE SET NULL,
+  source VARCHAR(10) CHECK (source IN ('ocr', 'voice')),
+  raw_input TEXT NOT NULL,
+  matched_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  match_confidence VARCHAR(10),
+  staff_corrected_to UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS pending_enrollments (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
@@ -30,6 +42,9 @@ CREATE TABLE IF NOT EXISTS pending_enrollments (
   name VARCHAR(255),
   language_pref VARCHAR(5),
   consent_given BOOLEAN DEFAULT false,
+  candidate_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  candidate_match_log_id UUID REFERENCES doctor_match_log(id) ON DELETE SET NULL,
+  candidate_document_id UUID REFERENCES prescriptions(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (clinic_id, phone)
 );
@@ -41,18 +56,6 @@ CREATE TABLE IF NOT EXISTS doctor_aliases (
   learned_from VARCHAR(20) CHECK (learned_from IN ('staff_correction', 'confirmed_match')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (doctor_id, alias)
-);
-
-CREATE TABLE IF NOT EXISTS doctor_match_log (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
-  patient_id UUID REFERENCES patients(id) ON DELETE SET NULL,
-  source VARCHAR(10) CHECK (source IN ('ocr', 'voice')),
-  raw_input TEXT NOT NULL,
-  matched_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
-  match_confidence VARCHAR(10),
-  staff_corrected_to UUID REFERENCES doctors(id) ON DELETE SET NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Backfill: every existing clinic already has exactly one WhatsApp number in
