@@ -8,7 +8,7 @@ const { recordResolution } = require('../services/doctor-match.service');
  * Fetches flags filtered by role and staff permissions
  */
 router.get('/', async (req, res) => {
-  const { staff_id, role, status = 'open' } = req.query;
+  const { staff_id, role, status = 'open', clinic_id } = req.query;
 
   try {
     let query = `
@@ -23,10 +23,23 @@ router.get('/', async (req, res) => {
     `;
     const params = [status];
 
-    // Multi-doctor filtering: Doctors only see their assigned patients, admins/coordinators see all
-    if (role === 'doctor' && staff_id) {
-      query += ` AND (f.assigned_to = $2 OR p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $2))`;
+    if (role === 'super_admin') {
+      // No clinic filter by default — accept ?clinic_id= to view one clinic specifically.
+      if (clinic_id) {
+        params.push(clinic_id);
+        query += ` AND p.clinic_id = $${params.length}`;
+      }
+    } else if (staff_id) {
+      // Every other role is scoped to their own clinic — this was previously
+      // missing for admin/coordinator/nurse entirely (harmless with one
+      // clinic in the deployment; a cross-tenant leak once there's more than one).
       params.push(staff_id);
+      query += ` AND p.clinic_id = (SELECT clinic_id FROM staff_users WHERE id = $${params.length})`;
+
+      if (role === 'doctor') {
+        // Multi-doctor filtering: doctors only see their own assigned patients
+        query += ` AND (f.assigned_to = $${params.length} OR p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $${params.length}))`;
+      }
     }
 
     query += ` ORDER BY CASE WHEN f.priority = 'urgent' THEN 1 ELSE 2 END, f.created_at DESC;`;
