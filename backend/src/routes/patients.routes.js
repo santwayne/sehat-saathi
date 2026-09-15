@@ -10,7 +10,7 @@ const { requireRole } = require('../services/auth.service');
  * patients; admins/coordinators/nurses see every patient in their clinic.
  */
 router.get('/', async (req, res) => {
-  const { staff_id, role, search } = req.query;
+  const { staff_id, role, search, clinic_id } = req.query;
 
   try {
     let query = `
@@ -24,7 +24,15 @@ router.get('/', async (req, res) => {
     `;
     const params = [];
 
-    if (staff_id) {
+    // Super admin sees across every clinic by default; ?clinic_id= narrows
+    // to one (the clinic-switcher view). Everyone else stays scoped to their
+    // own clinic via staff_id, unchanged.
+    if (req.user?.role === 'super_admin') {
+      if (clinic_id) {
+        params.push(clinic_id);
+        query += ` AND p.clinic_id = $${params.length}`;
+      }
+    } else if (staff_id) {
       params.push(staff_id);
       query += ` AND p.clinic_id = (SELECT clinic_id FROM staff_users WHERE id = $${params.length})`;
     }
@@ -158,7 +166,7 @@ router.post('/', async (req, res) => {
       pool.query('SELECT name FROM clinics WHERE id = $1', [clinic_id])
         .then(({ rows: cr }) => {
           const clinicName = cr[0]?.name || 'your clinic';
-          return sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name, clinicName]);
+          return sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name, clinicName], clinic_id);
         })
         .catch((err) => console.error('Welcome template failed:', err.message));
     }
@@ -246,10 +254,10 @@ router.patch('/:id', async (req, res) => {
  * check-in schedules all cascade via existing ON DELETE CASCADE foreign
  * keys (schema.sql) — no orphaned rows left behind. Admin-only: this is
  * destructive and unlike PATCH can't be corrected by editing again, so it
- * gets the same requireRole('admin') gate as creating staff/doctor
+ * gets the same requireRole('admin', 'super_admin') gate as creating staff/doctor
  * accounts, rather than the open access enrollment itself uses.
  */
-router.delete('/:id', requireRole('admin'), async (req, res) => {
+router.delete('/:id', requireRole('admin', 'super_admin'), async (req, res) => {
   const { id } = req.params;
 
   try {

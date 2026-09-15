@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/context/AuthContext';
+import { useEffectiveClinicId } from '@/context/ClinicContext';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -324,6 +325,7 @@ function DetailPanel({
 
 export default function Prescriptions() {
   const { staff } = useAuth();
+  const clinicId = useEffectiveClinicId();
   const [queue, setQueue] = useState<PendingPrescription[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -331,18 +333,20 @@ export default function Prescriptions() {
   const [submitting, setSubmitting] = useState(false);
 
   const scope = staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide';
+  const pendingUrl = `/api/prescriptions/pending${clinicId ? `?clinic_id=${clinicId}` : ''}`;
 
   useEffect(() => {
     setLoading(true);
     api
-      .get<{ data: PendingPrescription[] }>('/api/prescriptions/pending')
+      .get<{ data: PendingPrescription[] }>(pendingUrl)
       .then((r) => {
         setQueue(r.data);
         if (r.data.length > 0 && !selectedId) setSelectedId(r.data[0]!.id);
       })
       .catch((e) => setError(e))
       .finally(() => setLoading(false));
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingUrl]);
 
   useEffect(() => {
     if (queue.length === 0) { setSelectedId(null); return; }
@@ -382,7 +386,7 @@ export default function Prescriptions() {
       setLoading(true);
       setError(null);
       api
-        .get<{ data: PendingPrescription[] }>('/api/prescriptions/pending')
+        .get<{ data: PendingPrescription[] }>(pendingUrl)
         .then((r) => setQueue(r.data))
         .catch((e) => setError(e))
         .finally(() => setLoading(false));

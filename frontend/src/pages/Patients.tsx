@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/AuthContext';
+import { useEffectiveClinicId } from '@/context/ClinicContext';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -543,6 +544,10 @@ function PatientDrawer({
 
 export default function Patients() {
   const { staff } = useAuth();
+  const switcherClinicId = useEffectiveClinicId();
+  // Super admin is scoped to whichever hospital the clinic switcher picked;
+  // every other role is always scoped to their own clinic.
+  const effectiveClinicId = staff?.role === 'super_admin' ? switcherClinicId : (staff?.clinic_id ?? undefined);
   const [patients, setPatients] = useState<PatientRow[] | null>(null);
   const [doctors, setDoctors] = useState<DoctorRow[]>([]);
   const [search, setSearch] = useState('');
@@ -558,20 +563,21 @@ export default function Patients() {
     if (!staff) return;
     setLoading(true);
     const q = search ? `&search=${encodeURIComponent(search)}` : '';
+    const clinicParam = effectiveClinicId ? `&clinic_id=${effectiveClinicId}` : '';
     api
-      .get<{ data: PatientRow[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}${q}`)
+      .get<{ data: PatientRow[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}${q}${clinicParam}`)
       .then((r) => setPatients(r.data))
       .catch((e) => setError(e))
       .finally(() => setLoading(false));
-  }, [staff, search]);
+  }, [staff, search, effectiveClinicId]);
 
   useEffect(() => {
-    if (!staff) return;
+    if (!staff || !effectiveClinicId) return;
     api
-      .get<{ data: DoctorRow[] }>(`/api/doctors?clinic_id=${staff.clinic_id}`)
+      .get<{ data: DoctorRow[] }>(`/api/doctors?clinic_id=${effectiveClinicId}`)
       .then((r) => setDoctors(r.data))
       .catch(() => setDoctors([]));
-  }, [staff]);
+  }, [staff, effectiveClinicId]);
 
   const filtered = useMemo(() => {
     if (!patients) return [];
@@ -730,7 +736,7 @@ export default function Patients() {
           <AddPatientSheet
             open={addOpen}
             onOpenChange={setAddOpen}
-            clinicId={staff?.clinic_id ?? ''}
+            clinicId={effectiveClinicId ?? ''}
             doctors={doctors}
             onAdded={handlePatientAdded}
           />

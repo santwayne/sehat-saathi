@@ -5,10 +5,13 @@ const { requireRole } = require('../services/auth.service');
 
 /**
  * GET /api/doctors?clinic_id=
- * Lists doctors (Settings page, and assigned-doctor dropdowns on patient enrollment).
+ * Lists doctors (Settings page, and assigned-doctor dropdowns on patient
+ * enrollment). Same super-admin-can-see-any-clinic / everyone-else-pinned-to-
+ * their-own-clinic rule as GET /api/staff.
  */
 router.get('/', async (req, res) => {
-  const { clinic_id } = req.query;
+  const isSuperAdmin = req.user?.role === 'super_admin';
+  const clinic_id = isSuperAdmin ? req.query.clinic_id : (req.user?.clinic_id || req.query.clinic_id);
 
   try {
     const query = clinic_id
@@ -32,7 +35,7 @@ router.get('/', async (req, res) => {
  * Registers a doctor, optionally linked to a staff_users login so flags route
  * to them directly (Section 5). Requires an authenticated admin.
  */
-router.post('/', requireRole('admin'), async (req, res) => {
+router.post('/', requireRole('admin', 'super_admin'), async (req, res) => {
   const { clinic_id, name, specialty, staff_user_id } = req.body;
 
   if (!clinic_id || !name) {
@@ -61,7 +64,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
  * unassigned rather than being blocked or cascaded away. Admin-only,
  * matching POST above.
  */
-router.delete('/:id', requireRole('admin'), async (req, res) => {
+router.delete('/:id', requireRole('admin', 'super_admin'), async (req, res) => {
   const { id } = req.params;
 
   try {

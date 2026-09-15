@@ -372,14 +372,14 @@ export default function Settings() {
           <AddStaffSheet
             open={addStaffOpen}
             onOpenChange={setAddStaffOpen}
-            clinicId={staff.clinic_id}
+            clinicId={staff.clinic_id ?? ''}
             onAdded={(s) => setStaffList((prev) => [s, ...(prev ?? [])])}
             onDoctorAdded={(d) => setDoctors((prev) => [d, ...(prev ?? [])])}
           />
           <AddDoctorSheet
             open={addDoctorOpen}
             onOpenChange={setAddDoctorOpen}
-            clinicId={staff.clinic_id}
+            clinicId={staff.clinic_id ?? ''}
             onAdded={(d) => setDoctors((prev) => [d, ...(prev ?? [])])}
           />
         </>

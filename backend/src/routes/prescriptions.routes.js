@@ -3,14 +3,20 @@ const router = express.Router();
 const { pool } = require('../db');
 
 /**
- * GET /api/prescriptions/pending
- * Fetches prescriptions requiring manual staff verification
+ * GET /api/prescriptions/pending?clinic_id=
+ * Fetches prescriptions requiring manual staff verification. Super admin can
+ * see across every clinic or narrow with ?clinic_id=; everyone else is
+ * pinned to their own clinic.
  */
 router.get('/pending', async (req, res) => {
+  const isSuperAdmin = req.user?.role === 'super_admin';
+  const clinic_id = isSuperAdmin ? req.query.clinic_id : (req.user?.clinic_id || req.query.clinic_id);
+
   try {
-    const query = `
+    let query = `
       SELECT
         p.id,
+        p.document_type,
         p.image_url,
         p.ocr_raw_text,
         p.structured_json,
@@ -22,9 +28,15 @@ router.get('/pending', async (req, res) => {
       FROM prescriptions p
       JOIN patients pat ON p.patient_id = pat.id
       WHERE p.verified_by_staff = false
-      ORDER BY p.created_at ASC;
     `;
-    const { rows } = await pool.query(query);
+    const params = [];
+    if (clinic_id) {
+      params.push(clinic_id);
+      query += ` AND pat.clinic_id = $${params.length}`;
+    }
+    query += ' ORDER BY p.created_at ASC;';
+
+    const { rows } = await pool.query(query, params);
     return res.status(200).json({ success: true, data: rows });
   } catch (error) {
     console.error('Failed to fetch pending prescriptions:', error);

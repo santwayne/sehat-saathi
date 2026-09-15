@@ -4,6 +4,7 @@ import { AlertTriangle, Flag as FlagIcon, Pill, Users } from 'lucide-react';
 import { AppShell } from '@/components/app/app-shell';
 import { LoadingState, EmptyState, ErrorState } from '@/components/app/states';
 import { useAuth } from '@/context/AuthContext';
+import { useEffectiveClinicId } from '@/context/ClinicContext';
 import { api } from '@/lib/api';
 
 interface ApiFlag {
@@ -52,6 +53,7 @@ function StatCard({
 
 export default function Dashboard() {
   const { staff } = useAuth();
+  const clinicId = useEffectiveClinicId();
   const [flags, setFlags] = useState<ApiFlag[] | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [patientCount, setPatientCount] = useState<number | null>(null);
@@ -60,26 +62,35 @@ export default function Dashboard() {
 
   const scope = staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide';
 
-  useEffect(() => {
+  function load() {
     if (!staff) return;
+    // Super admin is scoped to whichever hospital the clinic switcher has
+    // selected (clinicId); every other role is already pinned to their own
+    // clinic server-side, so an absent clinicId there is expected.
+    const clinicParam = clinicId ? `&clinic_id=${clinicId}` : '';
     setLoading(true);
     Promise.all([
       api
-        .get<{ data: ApiFlag[] }>(`/api/flags?status=open&role=${staff.role}&staff_id=${staff.id}`)
+        .get<{ data: ApiFlag[] }>(`/api/flags?status=open&role=${staff.role}&staff_id=${staff.id}${clinicParam}`)
         .then((r) => setFlags(r.data))
         .catch(() => setFlags([])),
       api
-        .get<{ data: unknown[] }>('/api/prescriptions/pending')
+        .get<{ data: unknown[] }>(`/api/prescriptions/pending${clinicParam ? `?${clinicParam.slice(1)}` : ''}`)
         .then((r) => setPendingCount(r.data.length))
         .catch(() => setPendingCount(0)),
       api
-        .get<{ data: unknown[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}`)
+        .get<{ data: unknown[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}${clinicParam}`)
         .then((r) => setPatientCount(r.data.length))
         .catch(() => setPatientCount(0)),
     ])
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
-  }, [staff]);
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staff, clinicId]);
 
   const urgent = (flags ?? []).filter((f) => f.priority === 'urgent');
   const allEmpty =
@@ -90,24 +101,7 @@ export default function Dashboard() {
     setFlags(null);
     setPendingCount(null);
     setPatientCount(null);
-    setLoading(true);
-    if (!staff) return;
-    Promise.all([
-      api
-        .get<{ data: ApiFlag[] }>(`/api/flags?status=open&role=${staff.role}&staff_id=${staff.id}`)
-        .then((r) => setFlags(r.data))
-        .catch(() => setFlags([])),
-      api
-        .get<{ data: unknown[] }>('/api/prescriptions/pending')
-        .then((r) => setPendingCount(r.data.length))
-        .catch(() => setPendingCount(0)),
-      api
-        .get<{ data: unknown[] }>(`/api/patients?role=${staff.role}&staff_id=${staff.id}`)
-        .then((r) => setPatientCount(r.data.length))
-        .catch(() => setPatientCount(0)),
-    ])
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
-      .finally(() => setLoading(false));
+    load();
   }
 
   return (

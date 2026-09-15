@@ -5,11 +5,15 @@ const { hashPassword, requireRole } = require('../services/auth.service');
 
 /**
  * GET /api/staff?clinic_id=
- * Lists staff accounts for a clinic (Settings page). Admin-only in the UI,
- * not enforced server-side here since it returns no password data.
+ * Lists staff accounts for a clinic (Settings page). Super admin only route
+ * that's allowed to omit clinic_id (sees every clinic) or pass any clinic_id
+ * (clinic-switcher view) — an authenticated non-super-admin caller is always
+ * pinned to their own clinic regardless of what clinic_id they pass, so one
+ * hospital's staff can't read another's roster.
  */
 router.get('/', async (req, res) => {
-  const { clinic_id } = req.query;
+  const isSuperAdmin = req.user?.role === 'super_admin';
+  const clinic_id = isSuperAdmin ? req.query.clinic_id : (req.user?.clinic_id || req.query.clinic_id);
 
   try {
     const query = clinic_id
@@ -28,7 +32,7 @@ router.get('/', async (req, res) => {
  * POST /api/staff
  * Creates a new staff account. Requires an authenticated admin.
  */
-router.post('/', requireRole('admin'), async (req, res) => {
+router.post('/', requireRole('admin', 'super_admin'), async (req, res) => {
   const { clinic_id, name, role, phone, password, notify_on_flag = true } = req.body;
 
   if (!clinic_id || !name || !role || !phone || !password) {
