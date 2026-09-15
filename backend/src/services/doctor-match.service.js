@@ -5,10 +5,25 @@ const { pool } = require('../db');
 // through here so there's one confidence rule, not two.
 
 const HIGH_CONFIDENCE_THRESHOLD = 0.6;
+// A short fragment (e.g. just a surname) that happens to be a substring of a
+// doctor's full name scores deceptively high on plain bigram overlap — Dice
+// coefficient rewards containment almost regardless of how much of the
+// target name it actually covers. "Sharma" alone against "Arjun Sharma"
+// scores ~0.625, comfortably over HIGH_CONFIDENCE_THRESHOLD, on a name
+// component common enough that a different doctor could plausibly share it.
+// This is exactly the spec's own worked example (Section 6.4/8.2: "Sharma
+// sahab" is the uncertain case that should trigger a confirmation, not an
+// instant auto-assign) — so a partial-name input (fewer words than the
+// doctor's full name) needs a stricter bar before it counts as confident.
+const HIGH_CONFIDENCE_THRESHOLD_PARTIAL = 0.8;
 // If the top two candidates score within this gap of each other, treat the
 // match as ambiguous rather than confidently picking the higher one.
 const AMBIGUOUS_GAP = 0.08;
 const NO_MATCH_THRESHOLD = 0.3;
+
+function wordCount(normalized) {
+  return normalized ? normalized.split(' ').filter(Boolean).length : 0;
+}
 
 const HONORIFIC_PATTERN = /\b(dr\.?|doctor|sahab|sahib|saab|ji)\b/gi;
 
@@ -85,13 +100,23 @@ async function matchDoctor({ clinicId, rawInput }) {
     return { status: 'no_match', candidate: null, score: 0 };
   }
 
+  const inputWordCount = wordCount(normalizedInput);
   const scored = docRes.rows
-    .map((d) => ({ id: d.id, name: d.name, score: bigramSimilarity(normalizedInput, normalizeForMatch(d.name)) }))
+    .map((d) => {
+      const normalizedName = normalizeForMatch(d.name);
+      const isPartial = inputWordCount < wordCount(normalizedName);
+      return {
+        id: d.id,
+        name: d.name,
+        score: bigramSimilarity(normalizedInput, normalizedName),
+        threshold: isPartial ? HIGH_CONFIDENCE_THRESHOLD_PARTIAL : HIGH_CONFIDENCE_THRESHOLD,
+      };
+    })
     .sort((a, b) => b.score - a.score);
 
   const [best, second] = scored;
 
-  if (best.score >= HIGH_CONFIDENCE_THRESHOLD && (!second || best.score - second.score >= AMBIGUOUS_GAP)) {
+  if (best.score >= best.threshold && (!second || best.score - second.score >= AMBIGUOUS_GAP)) {
     return { status: 'high_confidence', candidate: { id: best.id, name: best.name }, score: best.score };
   }
 
