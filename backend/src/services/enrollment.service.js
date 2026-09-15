@@ -88,6 +88,7 @@ async function resolveDoctorSignal({ pending, clinic, source, rawInput }) {
   const matchLogId = await logMatchAttempt({
     clinicId: clinic.id,
     patientId: null,
+    contextPhone: pending.phone,
     source,
     rawInput,
     matchedDoctorId: match.candidate?.id,
@@ -115,7 +116,9 @@ async function resolveDoctorSignal({ pending, clinic, source, rawInput }) {
     flagType: 'doctor_match_failed',
     priority: 'normal',
     assignedDoctorId: null,
-    reason: `Self-enrolling patient ${pending.phone} at clinic ${clinic.id} sent a ${source} signal ("${rawInput}") that couldn't be matched to any doctor. Needs manual assignment once they complete enrollment.`,
+    clinicId: clinic.id,
+    contextPhone: pending.phone,
+    reason: `Self-enrolling patient ${pending.phone} at clinic ${clinic.id} sent a ${source} signal ("${rawInput}") that couldn't be matched to any doctor. Resolve via POST /api/flags/:id/resolve-enrollment once you know which doctor it should be.`,
   });
   await sendWhatsAppMessage(pending.phone, MESSAGES.noDoctorSignal, clinic.id);
   return { completed: false, awaitingConfirmation: false };
@@ -194,7 +197,9 @@ async function handleConfirmationReply({ pending, clinic, text }) {
       flagType: 'doctor_match_failed',
       priority: 'normal',
       assignedDoctorId: null,
-      reason: `Self-enrolling patient ${pending.phone} at clinic ${clinic.id} rejected the suggested doctor match. Needs manual assignment.`,
+      clinicId: clinic.id,
+      contextPhone: pending.phone,
+      reason: `Self-enrolling patient ${pending.phone} at clinic ${clinic.id} rejected the suggested doctor match. Resolve via POST /api/flags/:id/resolve-enrollment once you know which doctor it should be.`,
     });
     await sendWhatsAppMessage(pending.phone, MESSAGES.noDoctorSignal, clinic.id);
     return;
@@ -265,4 +270,4 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
   }
 }
 
-module.exports = { handleSelfEnrollment };
+module.exports = { handleSelfEnrollment, completeEnrollment, getClinic };

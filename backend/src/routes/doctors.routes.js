@@ -6,12 +6,13 @@ const { requireRole } = require('../services/auth.service');
 /**
  * GET /api/doctors?clinic_id=
  * Lists doctors (Settings page, and assigned-doctor dropdowns on patient
- * enrollment). Same super-admin-can-see-any-clinic / everyone-else-pinned-to-
- * their-own-clinic rule as GET /api/staff.
+ * enrollment). Requires authentication — same reasoning and the same
+ * super-admin-can-see-any-clinic / everyone-else-pinned-to-their-own-clinic
+ * rule as GET /api/staff.
  */
-router.get('/', async (req, res) => {
-  const isSuperAdmin = req.user?.role === 'super_admin';
-  const clinic_id = isSuperAdmin ? req.query.clinic_id : (req.user?.clinic_id || req.query.clinic_id);
+router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+  const isSuperAdmin = req.user.role === 'super_admin';
+  const clinic_id = isSuperAdmin ? req.query.clinic_id : req.user.clinic_id;
 
   try {
     const query = clinic_id

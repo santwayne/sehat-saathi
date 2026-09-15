@@ -3,7 +3,7 @@ const { pool } = require('../db');
 /**
  * Creates an escalation flag and routes to the assigned doctor or coordinator
  */
-async function createEscalationFlag({ patientId, conversationId, flagType, priority, assignedDoctorId, reason }) {
+async function createEscalationFlag({ patientId, conversationId, flagType, priority, assignedDoctorId, reason, clinicId, contextPhone }) {
   // Route to the staff login linked to the patient's assigned doctor, if any.
   let assignedStaffId = null;
 
@@ -15,12 +15,16 @@ async function createEscalationFlag({ patientId, conversationId, flagType, prior
     assignedStaffId = docStaff.rows[0]?.staff_user_id || null;
   }
 
+  // clinicId/contextPhone are only set for flags raised before a patient
+  // exists (a 'doctor_match_failed' flag during self-enrollment) — they're
+  // how POST /api/flags/:id/resolve-enrollment finds its way back to the
+  // pending_enrollments row.
   const query = `
-    INSERT INTO flags (patient_id, conversation_id, flag_type, priority, status, assigned_to)
-    VALUES ($1, $2, $3, $4, 'open', $5)
+    INSERT INTO flags (patient_id, conversation_id, flag_type, priority, status, assigned_to, clinic_id, context_phone)
+    VALUES ($1, $2, $3, $4, 'open', $5, $6, $7)
     RETURNING id;
   `;
-  const values = [patientId, conversationId || null, flagType, priority, assignedStaffId];
+  const values = [patientId, conversationId || null, flagType, priority, assignedStaffId, clinicId || null, contextPhone || null];
   const { rows } = await pool.query(query, values);
 
   return rows[0].id;

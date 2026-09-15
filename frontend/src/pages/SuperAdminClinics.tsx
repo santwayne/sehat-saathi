@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
-import { Building2, PlusCircle } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import QRCode from 'qrcode';
+import { Building2, PlusCircle, Printer, QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
 import { LoadingState, EmptyState, ErrorState } from '@/components/app/states';
@@ -125,9 +126,91 @@ function AddHospitalSheet({
   );
 }
 
+// QR self-enrollment spec, Section 2: one QR per hospital, encoding a plain
+// wa.me deep link — reception/waiting-room/discharge-slip poster, generated
+// and displayed here (Add Hospital is the natural place for it, per the
+// spec's own suggestion) rather than by a separate print shop step.
+function HospitalQrSheet({
+  clinic,
+  open,
+  onOpenChange,
+}: {
+  clinic: ClinicSummary | null;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const digits = clinic?.whatsapp_number ? clinic.whatsapp_number.replace(/\D/g, '') : '';
+  const link = digits ? `https://wa.me/${digits}` : '';
+
+  useEffect(() => {
+    if (!open || !link) {
+      setDataUrl(null);
+      return;
+    }
+    setError(null);
+    QRCode.toDataURL(link, { width: 480, margin: 2, color: { dark: '#16302c', light: '#ffffff' } })
+      .then(setDataUrl)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to generate QR code'));
+  }, [open, link]);
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>{clinic?.name} — enrollment QR</SheetTitle>
+        </SheetHeader>
+        <div className="mt-6 space-y-5 px-1" data-print-poster>
+          <style>{`
+            @media print {
+              body * { visibility: hidden; }
+              [data-print-poster], [data-print-poster] * { visibility: visible; }
+              [data-print-poster] { position: fixed; inset: 0; padding: 48px; }
+              [data-print-poster] .no-print { display: none; }
+            }
+          `}</style>
+          <p className="text-sm text-muted-foreground">
+            One QR for the whole hospital — print it for reception, the waiting room, or a discharge slip.
+            A patient who scans it opens WhatsApp and can enroll themselves; no staff data entry needed.
+          </p>
+          {error ? (
+            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+          ) : !clinic?.whatsapp_number ? (
+            <p className="rounded-lg bg-warning-surface px-3 py-2 text-sm text-warning-foreground">
+              This hospital has no WhatsApp number on file yet — add one via Edit before generating its QR.
+            </p>
+          ) : (
+            <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-card p-6 text-center">
+              {dataUrl ? (
+                <img src={dataUrl} alt={`WhatsApp enrollment QR for ${clinic?.name}`} className="size-56" />
+              ) : (
+                <div className="flex size-56 items-center justify-center text-sm text-muted-foreground">Generating…</div>
+              )}
+              <div>
+                <p className="font-display text-base font-semibold text-foreground">{clinic?.name}</p>
+                <p className="text-xs text-muted-foreground">Scan to start on WhatsApp</p>
+              </div>
+              <code className="break-all rounded bg-muted px-2 py-1 text-xs text-muted-foreground">{link}</code>
+            </div>
+          )}
+          {dataUrl ? (
+            <Button className="no-print w-full" onClick={() => window.print()}>
+              <Printer className="mr-1.5 size-4" />
+              Print
+            </Button>
+          ) : null}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export default function SuperAdminClinics() {
   const { clinics, loading, refresh, selectedClinicId, setSelectedClinicId } = useClinicSwitcher();
   const [addOpen, setAddOpen] = useState(false);
+  const [qrClinic, setQrClinic] = useState<ClinicSummary | null>(null);
   const [error] = useState<unknown>(null);
 
   async function toggleSuspend(clinic: ClinicSummary) {
@@ -153,6 +236,7 @@ export default function SuperAdminClinics() {
       }
     >
       <AddHospitalSheet open={addOpen} onOpenChange={setAddOpen} onAdded={refresh} />
+      <HospitalQrSheet clinic={qrClinic} open={!!qrClinic} onOpenChange={(v) => !v && setQrClinic(null)} />
 
       {loading ? (
         <LoadingState rows={3} label="Loading hospitals…" />
@@ -198,9 +282,15 @@ export default function SuperAdminClinics() {
                   <td className="px-5 py-3 text-muted-foreground">{c.open_flag_count}</td>
                   <td className="px-5 py-3 text-muted-foreground">{c.doctor_count}</td>
                   <td className="px-5 py-3 text-right">
-                    <Button variant="outline" size="sm" onClick={() => toggleSuspend(c)}>
-                      {c.status === 'suspended' ? 'Reactivate' : 'Suspend'}
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={() => setQrClinic(c)}>
+                        <QrCode className="mr-1.5 size-3.5" />
+                        QR
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => toggleSuspend(c)}>
+                        {c.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

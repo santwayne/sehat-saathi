@@ -112,6 +112,13 @@ CREATE TABLE flags (
   priority VARCHAR(10) CHECK (priority IN ('normal', 'urgent')),
   status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'reviewed', 'resolved')),
   assigned_to UUID REFERENCES staff_users(id) ON DELETE SET NULL,
+  -- A 'doctor_match_failed' flag raised during QR self-enrollment (Section
+  -- 6.4) has no patient yet — clinic_id + context_phone are how staff find
+  -- their way back to the pending_enrollments row to resolve it (see
+  -- POST /api/flags/:id/resolve-enrollment). NULL for every other flag type,
+  -- which always has patient_id set instead.
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  context_phone VARCHAR(20),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   resolved_at TIMESTAMP WITH TIME ZONE
 );
@@ -125,6 +132,10 @@ CREATE TABLE doctor_match_log (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
   patient_id UUID REFERENCES patients(id) ON DELETE SET NULL,
+  -- Set alongside patient_id IS NULL, i.e. a match attempt made during
+  -- enrollment before the patients row exists — lets a later
+  -- resolve-enrollment call find the right pending_enrollments row.
+  context_phone VARCHAR(20),
   source VARCHAR(10) CHECK (source IN ('ocr', 'voice')),
   raw_input TEXT NOT NULL,
   matched_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,

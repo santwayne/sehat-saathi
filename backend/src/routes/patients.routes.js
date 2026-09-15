@@ -8,9 +8,14 @@ const { requireRole } = require('../services/auth.service');
  * GET /api/patients
  * Role-scoped, searchable patient roster. Doctors see only their own assigned
  * patients; admins/coordinators/nurses see every patient in their clinic.
+ * Requires authentication — clinic (and, for doctors, patient) scoping comes
+ * entirely from the verified JWT (req.user), never from client-supplied
+ * staff_id/role query params, which used to be trusted directly: any signed-
+ * in doctor could pass a different staff_id and read another doctor's — or
+ * with no staff_id/clinic_id at all, every clinic's — patients.
  */
-router.get('/', async (req, res) => {
-  const { staff_id, role, search, clinic_id } = req.query;
+router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+  const { search, clinic_id } = req.query;
 
   try {
     let query = `
@@ -25,20 +30,21 @@ router.get('/', async (req, res) => {
     const params = [];
 
     // Super admin sees across every clinic by default; ?clinic_id= narrows
-    // to one (the clinic-switcher view). Everyone else stays scoped to their
-    // own clinic via staff_id, unchanged.
-    if (req.user?.role === 'super_admin') {
+    // to one (the clinic-switcher view). Everyone else is pinned to their
+    // own clinic from the token, full stop.
+    if (req.user.role === 'super_admin') {
       if (clinic_id) {
         params.push(clinic_id);
         query += ` AND p.clinic_id = $${params.length}`;
       }
-    } else if (staff_id) {
-      params.push(staff_id);
-      query += ` AND p.clinic_id = (SELECT clinic_id FROM staff_users WHERE id = $${params.length})`;
-    }
+    } else {
+      params.push(req.user.clinic_id);
+      query += ` AND p.clinic_id = $${params.length}`;
 
-    if (role === 'doctor' && staff_id) {
-      query += ` AND p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $1)`;
+      if (req.user.role === 'doctor') {
+        params.push(req.user.id);
+        query += ` AND p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $${params.length})`;
+      }
     }
 
     if (search) {
