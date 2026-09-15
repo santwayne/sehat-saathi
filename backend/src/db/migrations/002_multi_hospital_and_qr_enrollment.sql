@@ -22,10 +22,16 @@ ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS document_type VARCHAR(20) NOT
 ALTER TABLE flags DROP CONSTRAINT IF EXISTS flags_flag_type_check;
 ALTER TABLE flags ADD CONSTRAINT flags_flag_type_check CHECK (flag_type IN ('missed_dose', 'symptom_reported', 'unanswerable_question', 'no_show_risk', 'ocr_low_confidence', 'doctor_match_failed', 'doctor_match_conflict'));
 
+-- A 'doctor_match_failed' flag raised during enrollment has no patient yet —
+-- these are how staff find their way back to the pending_enrollments row.
+ALTER TABLE flags ADD COLUMN IF NOT EXISTS clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE;
+ALTER TABLE flags ADD COLUMN IF NOT EXISTS context_phone VARCHAR(20);
+
 CREATE TABLE IF NOT EXISTS doctor_match_log (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
   patient_id UUID REFERENCES patients(id) ON DELETE SET NULL,
+  context_phone VARCHAR(20),
   source VARCHAR(10) CHECK (source IN ('ocr', 'voice')),
   raw_input TEXT NOT NULL,
   matched_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
@@ -33,6 +39,7 @@ CREATE TABLE IF NOT EXISTS doctor_match_log (
   staff_corrected_to UUID REFERENCES doctors(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE doctor_match_log ADD COLUMN IF NOT EXISTS context_phone VARCHAR(20);
 
 CREATE TABLE IF NOT EXISTS pending_enrollments (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

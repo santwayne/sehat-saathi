@@ -106,11 +106,11 @@ async function matchDoctor({ clinicId, rawInput }) {
  * Logs every match attempt (Section 8.1) so corrections can later be traced
  * back to what the system originally guessed.
  */
-async function logMatchAttempt({ clinicId, patientId, source, rawInput, matchedDoctorId, matchConfidence }) {
+async function logMatchAttempt({ clinicId, patientId, contextPhone, source, rawInput, matchedDoctorId, matchConfidence }) {
   const { rows } = await pool.query(
-    `INSERT INTO doctor_match_log (clinic_id, patient_id, source, raw_input, matched_doctor_id, match_confidence)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [clinicId, patientId || null, source, rawInput, matchedDoctorId || null, matchConfidence || null]
+    `INSERT INTO doctor_match_log (clinic_id, patient_id, context_phone, source, raw_input, matched_doctor_id, match_confidence)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [clinicId, patientId || null, contextPhone || null, source, rawInput, matchedDoctorId || null, matchConfidence || null]
   );
   return rows[0].id;
 }

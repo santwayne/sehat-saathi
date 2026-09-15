@@ -1,16 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
+const { requireRole } = require('../services/auth.service');
 
 /**
  * GET /api/prescriptions/pending?clinic_id=
- * Fetches prescriptions requiring manual staff verification. Super admin can
- * see across every clinic or narrow with ?clinic_id=; everyone else is
- * pinned to their own clinic.
+ * Fetches prescriptions requiring manual staff verification. Requires
+ * authentication. Super admin can see across every clinic or narrow with
+ * ?clinic_id=; everyone else is pinned to their own clinic from the token,
+ * regardless of what clinic_id (if any) they pass.
  */
-router.get('/pending', async (req, res) => {
-  const isSuperAdmin = req.user?.role === 'super_admin';
-  const clinic_id = isSuperAdmin ? req.query.clinic_id : (req.user?.clinic_id || req.query.clinic_id);
+router.get('/pending', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+  const isSuperAdmin = req.user.role === 'super_admin';
+  const clinic_id = isSuperAdmin ? req.query.clinic_id : req.user.clinic_id;
 
   try {
     let query = `
