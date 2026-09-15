@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { recordResolution } = require('../services/doctor-match.service');
 const { completeEnrollment } = require('../services/enrollment.service');
 const { sendWhatsAppMessage } = require('../services/whatsapp.service');
+const { logConversation } = require('../services/conversation.service');
 const { requireRole } = require('../services/auth.service');
 
 /**
@@ -191,11 +192,15 @@ router.patch('/:id/resolve-enrollment', async (req, res) => {
     const clinicRes = await pool.query('SELECT name FROM clinics WHERE id = $1', [flag.clinic_id]);
     const doctorName = doctorRes.rows[0]?.name || 'your doctor';
     const clinicName = clinicRes.rows[0]?.name || 'your hospital';
-    sendWhatsAppMessage(
-      patient.phone,
-      `You're all set. You're connected with Dr. ${doctorName} at ${clinicName}.`,
-      flag.clinic_id
-    ).catch((err) => console.error('Failed to notify patient after resolve-enrollment:', err.message));
+    // doctorName is doctors.name, which already includes "Dr." by convention
+    // (see Settings.tsx's placeholder) — don't prepend it again here.
+    const confirmationText = `You're all set. You're connected with ${doctorName} at ${clinicName}.`;
+    logConversation(patient.id, 'outbound', confirmationText, 'enrollment').catch((err) =>
+      console.error('Failed to log enrollment confirmation:', err.message)
+    );
+    sendWhatsAppMessage(patient.phone, confirmationText, flag.clinic_id).catch((err) =>
+      console.error('Failed to notify patient after resolve-enrollment:', err.message)
+    );
 
     // Feed the correction back into the alias table (Section 8.2), same as
     // the patient-facing confirmation/rejection paths do.

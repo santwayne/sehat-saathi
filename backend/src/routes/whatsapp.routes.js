@@ -165,7 +165,7 @@ router.post('/webhook', async (req, res) => {
               flagType: 'doctor_match_conflict',
               priority: 'normal',
               assignedDoctorId: patient.assigned_doctor_id,
-              reason: `New document names Dr. ${match.candidate.name}, but this patient is currently assigned to a different doctor. Please confirm which is correct.`,
+              reason: `New document names ${match.candidate.name}, but this patient is currently assigned to a different doctor. Please confirm which is correct.`,
             });
           }
         }

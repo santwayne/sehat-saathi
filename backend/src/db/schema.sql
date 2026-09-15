@@ -96,10 +96,18 @@ CREATE TABLE checkin_schedules (
 CREATE TABLE conversations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+  -- Set alongside patient_id IS NULL for messages exchanged during QR
+  -- self-enrollment (Section 4), before the patients row exists — completing
+  -- enrollment retroactively attaches these rows to the new patient_id
+  -- (see enrollment.service.js's completeEnrollment), so the full
+  -- name/consent/doctor-signal exchange still shows up in that patient's
+  -- Conversation History rather than being lost.
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  context_phone VARCHAR(20),
   channel VARCHAR(10) CHECK (channel IN ('whatsapp', 'voice')),
   direction VARCHAR(10) CHECK (direction IN ('inbound', 'outbound')),
   message_text TEXT NOT NULL,
-  intent_type VARCHAR(50), -- 'checkin_response', 'question', 'symptom_report', 'other'
+  intent_type VARCHAR(50), -- 'checkin_response', 'question', 'symptom_report', 'enrollment', 'other'
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

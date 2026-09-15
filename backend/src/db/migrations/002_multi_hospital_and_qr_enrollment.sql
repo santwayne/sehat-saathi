@@ -27,6 +27,11 @@ ALTER TABLE flags ADD CONSTRAINT flags_flag_type_check CHECK (flag_type IN ('mis
 ALTER TABLE flags ADD COLUMN IF NOT EXISTS clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE;
 ALTER TABLE flags ADD COLUMN IF NOT EXISTS context_phone VARCHAR(20);
 
+-- Same pattern for conversations logged during enrollment, before a patient
+-- exists — completing enrollment retroactively attaches these to patient_id.
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS context_phone VARCHAR(20);
+
 CREATE TABLE IF NOT EXISTS doctor_match_log (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,

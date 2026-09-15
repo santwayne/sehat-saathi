@@ -20,10 +20,14 @@ const MESSAGES = {
   consent: (name) => `Thanks, ${name}. Reply YES to receive your prescription updates, reminders, and check-ins on this WhatsApp number.`,
   consentUnclear: "Sorry, I didn't quite get that. Please reply YES if you'd like to be enrolled and receive updates on WhatsApp.",
   askDoctorSignal: 'Got it. Please send a photo of the prescription or report you received today, or a short voice note telling us which doctor you saw.',
-  confirmDoctor: (name) => `We think you saw Dr. ${name} — is that right? (Yes/No)`,
+  // doctorName/name here is doctors.name, which by this codebase's own
+  // convention (see Settings.tsx's "Dr. Arjun Sharma" placeholder) is
+  // entered with the "Dr." title already included — prepending it again
+  // here produced "Dr. Dr. Arjun Sharma", caught by a real-DB test.
+  confirmDoctor: (name) => `We think you saw ${name} — is that right? (Yes/No)`,
   confirmDoctorRetry: 'Sorry, please reply Yes or No — did you see that doctor?',
   noDoctorSignal: "We couldn't quite match that to a doctor here. Please try sending a clearer photo of the prescription/report, or a voice note naming your doctor — our team has also been notified.",
-  enrolled: (doctorName, hospitalName) => `You're all set. You're connected with Dr. ${doctorName} at ${hospitalName}.`,
+  enrolled: (doctorName, hospitalName) => `You're all set. You're connected with ${doctorName} at ${hospitalName}.`,
   mediaDownloadFailed: "Thanks — we received that but had trouble processing it. Please try sending it again, or a voice note naming your doctor.",
 };
 
@@ -56,8 +60,37 @@ async function getClinic(clinicId) {
 }
 
 /**
+ * Logs one turn of the pre-enrollment WhatsApp exchange. patient_id is NULL
+ * here (there's no patients row yet) — clinic_id + context_phone are how
+ * completeEnrollment finds these rows again to attach them once the patient
+ * exists, so the full name/consent/doctor-signal conversation still shows up
+ * in that patient's Conversation History rather than being lost (Section
+ * 6.3's audit-log requirement applies just as much before enrollment
+ * finishes as after).
+ */
+async function logMessage(clinicId, phone, direction, text) {
+  await pool.query(
+    `INSERT INTO conversations (clinic_id, context_phone, channel, direction, message_text, intent_type)
+     VALUES ($1, $2, 'whatsapp', $3, $4, 'enrollment')`,
+    [clinicId, phone, direction, text]
+  );
+}
+
+/**
+ * Sends a WhatsApp message and logs it as an outbound conversation turn.
+ * Logs before sending, same as the rest of the codebase's conversation
+ * logging — the audit record shouldn't depend on WhatsApp delivery
+ * succeeding.
+ */
+async function notify(clinicId, phone, text) {
+  await logMessage(clinicId, phone, 'outbound', text);
+  await sendWhatsAppMessage(phone, text, clinicId);
+}
+
+/**
  * Creates the `patients` row (the actual moment of enrollment), attaches any
- * document collected during the doctor-signal step, and clears the pending row.
+ * document collected during the doctor-signal step, retroactively attaches
+ * the pre-enrollment conversation log, and clears the pending row.
  */
 async function completeEnrollment({ pending, clinicId, doctorId }) {
   const { rows } = await pool.query(
@@ -73,6 +106,11 @@ async function completeEnrollment({ pending, clinicId, doctorId }) {
       [patient.id, doctorId || null, pending.candidate_document_id]
     );
   }
+
+  await pool.query(
+    `UPDATE conversations SET patient_id = $1 WHERE clinic_id = $2 AND context_phone = $3 AND patient_id IS NULL`,
+    [patient.id, clinicId, pending.phone]
+  );
 
   await pool.query('DELETE FROM pending_enrollments WHERE id = $1', [pending.id]);
   return patient;
@@ -100,13 +138,13 @@ async function resolveDoctorSignal({ pending, clinic, source, rawInput }) {
       await recordResolution({ matchLogId, resolvedDoctorId: match.candidate.id, rawInput, learnedFrom: 'confirmed_match' });
     }
     const patient = await completeEnrollment({ pending, clinicId: clinic.id, doctorId: match.candidate.id });
-    await sendWhatsAppMessage(pending.phone, MESSAGES.enrolled(match.candidate.name, clinic.name), clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.enrolled(match.candidate.name, clinic.name));
     return { completed: true, patient };
   }
 
   if (match.status === 'low_confidence') {
     await updatePending(pending.id, { candidate_doctor_id: match.candidate.id, candidate_match_log_id: matchLogId });
-    await sendWhatsAppMessage(pending.phone, MESSAGES.confirmDoctor(match.candidate.name), clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.confirmDoctor(match.candidate.name));
     return { completed: false, awaitingConfirmation: true };
   }
 
@@ -120,7 +158,7 @@ async function resolveDoctorSignal({ pending, clinic, source, rawInput }) {
     contextPhone: pending.phone,
     reason: `Self-enrolling patient ${pending.phone} at clinic ${clinic.id} sent a ${source} signal ("${rawInput}") that couldn't be matched to any doctor. Resolve via POST /api/flags/:id/resolve-enrollment once you know which doctor it should be.`,
   });
-  await sendWhatsAppMessage(pending.phone, MESSAGES.noDoctorSignal, clinic.id);
+  await notify(clinic.id, pending.phone, MESSAGES.noDoctorSignal);
   return { completed: false, awaitingConfirmation: false };
 }
 
@@ -130,7 +168,7 @@ async function handleImageSignal({ pending, clinic, mediaId }) {
     downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
   } catch (err) {
     console.error('Enrollment: failed to download image:', err.message);
-    await sendWhatsAppMessage(pending.phone, MESSAGES.mediaDownloadFailed, clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.mediaDownloadFailed);
     return;
   }
 
@@ -147,7 +185,7 @@ async function handleImageSignal({ pending, clinic, mediaId }) {
   pending.candidate_document_id = docRes.rows[0].id;
 
   if (!ocrResult.doctorName || ocrResult.doctorNameConfidence === 'low') {
-    await sendWhatsAppMessage(pending.phone, MESSAGES.noDoctorSignal, clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.noDoctorSignal);
     return;
   }
 
@@ -160,17 +198,18 @@ async function handleAudioSignal({ pending, clinic, mediaId }) {
     downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
   } catch (err) {
     console.error('Enrollment: failed to download audio:', err.message);
-    await sendWhatsAppMessage(pending.phone, MESSAGES.mediaDownloadFailed, clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.mediaDownloadFailed);
     return;
   }
 
   const { transcript } = await transcribeAudio(Buffer.from(downloaded.base64, 'base64'), downloaded.mimeType, pending.language_pref);
 
   if (!transcript) {
-    await sendWhatsAppMessage(pending.phone, MESSAGES.noDoctorSignal, clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.noDoctorSignal);
     return;
   }
 
+  await logMessage(clinic.id, pending.phone, 'inbound', `[Voice transcript] ${transcript}`);
   await resolveDoctorSignal({ pending, clinic, source: 'voice', rawInput: transcript });
 }
 
@@ -185,7 +224,7 @@ async function handleConfirmationReply({ pending, clinic, text }) {
       learnedFrom: 'confirmed_match',
     });
     await completeEnrollment({ pending, clinicId: clinic.id, doctorId: pending.candidate_doctor_id });
-    await sendWhatsAppMessage(pending.phone, MESSAGES.enrolled(doctorName, clinic.name), clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.enrolled(doctorName, clinic.name));
     return;
   }
 
@@ -201,11 +240,11 @@ async function handleConfirmationReply({ pending, clinic, text }) {
       contextPhone: pending.phone,
       reason: `Self-enrolling patient ${pending.phone} at clinic ${clinic.id} rejected the suggested doctor match. Resolve via POST /api/flags/:id/resolve-enrollment once you know which doctor it should be.`,
     });
-    await sendWhatsAppMessage(pending.phone, MESSAGES.noDoctorSignal, clinic.id);
+    await notify(clinic.id, pending.phone, MESSAGES.noDoctorSignal);
     return;
   }
 
-  await sendWhatsAppMessage(pending.phone, MESSAGES.confirmDoctorRetry, clinic.id);
+  await notify(clinic.id, pending.phone, MESSAGES.confirmDoctorRetry);
 }
 
 /**
@@ -216,11 +255,22 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
   const clinic = await getClinic(clinicId);
   if (!clinic) return;
 
+  // Log every inbound turn of the pre-enrollment exchange, same as the
+  // existing-patient path does in whatsapp.routes.js — text logs its literal
+  // content, image/audio log a placeholder (the actual document/transcript
+  // is logged separately by handleImageSignal/handleAudioSignal once processed).
+  const inboundLogText =
+    messageType === 'text' ? (message.text?.body || '') :
+    messageType === 'image' ? '[Photo received]' :
+    messageType === 'audio' ? '[Voice note received]' :
+    `[${messageType} message received]`;
+  await logMessage(clinicId, senderPhone, 'inbound', inboundLogText);
+
   let pending = await getPending(clinicId, senderPhone);
 
   if (!pending) {
     pending = await createPending(clinicId, senderPhone);
-    await sendWhatsAppMessage(senderPhone, MESSAGES.welcome(clinic.name), clinic.id);
+    await notify(clinic.id, senderPhone, MESSAGES.welcome(clinic.name));
     return;
   }
   pending.phone = senderPhone;
@@ -228,11 +278,11 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
   if (pending.stage === 'awaiting_name') {
     const name = messageType === 'text' ? message.text?.body?.trim() : '';
     if (!name) {
-      await sendWhatsAppMessage(senderPhone, MESSAGES.welcome(clinic.name), clinic.id);
+      await notify(clinic.id, senderPhone, MESSAGES.welcome(clinic.name));
       return;
     }
     await updatePending(pending.id, { name: name.slice(0, 255), stage: 'awaiting_consent' });
-    await sendWhatsAppMessage(senderPhone, MESSAGES.consent(name), clinic.id);
+    await notify(clinic.id, senderPhone, MESSAGES.consent(name));
     return;
   }
 
@@ -240,10 +290,10 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
     const text = messageType === 'text' ? (message.text?.body || '').trim() : '';
     if (AFFIRMATIVE.test(text)) {
       await updatePending(pending.id, { consent_given: true, stage: 'awaiting_doctor_signal' });
-      await sendWhatsAppMessage(senderPhone, MESSAGES.askDoctorSignal, clinic.id);
+      await notify(clinic.id, senderPhone, MESSAGES.askDoctorSignal);
     } else {
       // Never silently advance on an ambiguous/negative reply (spec 4.2 step 3) — re-ask once.
-      await sendWhatsAppMessage(senderPhone, MESSAGES.consentUnclear, clinic.id);
+      await notify(clinic.id, senderPhone, MESSAGES.consentUnclear);
     }
     return;
   }
@@ -266,7 +316,7 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
       return;
     }
 
-    await sendWhatsAppMessage(senderPhone, MESSAGES.askDoctorSignal, clinic.id);
+    await notify(clinic.id, senderPhone, MESSAGES.askDoctorSignal);
   }
 }
 

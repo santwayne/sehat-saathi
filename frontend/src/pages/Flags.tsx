@@ -281,7 +281,7 @@ function FlagRow({
           </p>
           <p className="text-xs text-muted-foreground">
             {flag.patient_id
-              ? (flag.doctor_name ? `Dr. ${flag.doctor_name}` : 'Unassigned — coordinator queue')
+              ? (flag.doctor_name ?? 'Unassigned — coordinator queue')
               : 'Mid self-enrollment — no patient record yet'}
             {' · '}
             {relativeTime(flag.created_at)}
