@@ -158,7 +158,7 @@ router.post('/', async (req, res) => {
       pool.query('SELECT name FROM clinics WHERE id = $1', [clinic_id])
         .then(({ rows: cr }) => {
           const clinicName = cr[0]?.name || 'your clinic';
-          return sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name, clinicName]);
+          return sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name, clinicName], clinic_id);
         })
         .catch((err) => console.error('Welcome template failed:', err.message));
     }

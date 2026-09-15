@@ -14,7 +14,7 @@ const MESSAGES = {
 
 async function sendDueCheckinsDirectly() {
   const { rows } = await pool.query(`
-    SELECT cs.id AS schedule_id, cs.patient_id, p.phone, p.language_pref
+    SELECT cs.id AS schedule_id, cs.patient_id, p.phone, p.language_pref, p.clinic_id
     FROM checkin_schedules cs
     JOIN patients p ON cs.patient_id = p.id
     WHERE cs.active = true
@@ -27,7 +27,7 @@ async function sendDueCheckinsDirectly() {
   for (const row of rows) {
     const textPrompt = MESSAGES[row.language_pref] || MESSAGES.hi;
     try {
-      await sendWhatsAppMessage(row.phone, textPrompt);
+      await sendWhatsAppMessage(row.phone, textPrompt, row.clinic_id);
 
       await pool.query(
         `UPDATE checkin_schedules
