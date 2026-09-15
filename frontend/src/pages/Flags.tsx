@@ -26,6 +26,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/context/AuthContext';
+import { useEffectiveClinicId } from '@/context/ClinicContext';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -242,6 +243,7 @@ function FlagRow({
 
 export default function Flags() {
   const { staff } = useAuth();
+  const clinicId = useEffectiveClinicId();
   const [status, setStatus] = useState<'open' | 'resolved'>('open');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [flags, setFlags] = useState<ApiFlag[] | null>(null);
@@ -255,8 +257,9 @@ export default function Flags() {
     setLoading(true);
     setError(null);
     try {
+      const clinicParam = clinicId ? `&clinic_id=${clinicId}` : '';
       const res = await api.get<{ data: ApiFlag[] }>(
-        `/api/flags?status=${status}&role=${staff.role}&staff_id=${staff.id}`,
+        `/api/flags?status=${status}&role=${staff.role}&staff_id=${staff.id}${clinicParam}`,
       );
       setFlags(res.data);
     } catch (e) {
@@ -264,7 +267,7 @@ export default function Flags() {
     } finally {
       setLoading(false);
     }
-  }, [staff, status]);
+  }, [staff, status, clinicId]);
 
   useEffect(() => {
     void load();

@@ -3,9 +3,9 @@ import { api } from '../lib/api';
 
 export interface Staff {
   id: string;
-  clinic_id: string;
+  clinic_id: string | null;
   name: string;
-  role: 'admin' | 'coordinator' | 'nurse' | 'doctor';
+  role: 'admin' | 'coordinator' | 'nurse' | 'doctor' | 'super_admin';
   phone: string;
 }
 
