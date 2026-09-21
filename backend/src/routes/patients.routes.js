@@ -8,9 +8,14 @@ const { requireRole } = require('../services/auth.service');
  * GET /api/patients
  * Role-scoped, searchable patient roster. Doctors see only their own assigned
  * patients; admins/coordinators/nurses see every patient in their clinic.
+ * Requires authentication — clinic (and, for doctors, patient) scoping comes
+ * entirely from the verified JWT (req.user), never from client-supplied
+ * staff_id/role query params, which used to be trusted directly: any signed-
+ * in doctor could pass a different staff_id and read another doctor's — or
+ * with no staff_id/clinic_id at all, every clinic's — patients.
  */
-router.get('/', async (req, res) => {
-  const { staff_id, role, search } = req.query;
+router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+  const { search, clinic_id } = req.query;
 
   try {
     let query = `
@@ -24,13 +29,22 @@ router.get('/', async (req, res) => {
     `;
     const params = [];
 
-    if (staff_id) {
-      params.push(staff_id);
-      query += ` AND p.clinic_id = (SELECT clinic_id FROM staff_users WHERE id = $${params.length})`;
-    }
+    // Super admin sees across every clinic by default; ?clinic_id= narrows
+    // to one (the clinic-switcher view). Everyone else is pinned to their
+    // own clinic from the token, full stop.
+    if (req.user.role === 'super_admin') {
+      if (clinic_id) {
+        params.push(clinic_id);
+        query += ` AND p.clinic_id = $${params.length}`;
+      }
+    } else {
+      params.push(req.user.clinic_id);
+      query += ` AND p.clinic_id = $${params.length}`;
 
-    if (role === 'doctor' && staff_id) {
-      query += ` AND p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $1)`;
+      if (req.user.role === 'doctor') {
+        params.push(req.user.id);
+        query += ` AND p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $${params.length})`;
+      }
     }
 
     if (search) {
@@ -158,7 +172,7 @@ router.post('/', async (req, res) => {
       pool.query('SELECT name FROM clinics WHERE id = $1', [clinic_id])
         .then(({ rows: cr }) => {
           const clinicName = cr[0]?.name || 'your clinic';
-          return sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name, clinicName]);
+          return sendWhatsAppTemplate(cleanPhone, 'patient_welcome', 'en', [patient.name, clinicName], clinic_id);
         })
         .catch((err) => console.error('Welcome template failed:', err.message));
     }
@@ -246,10 +260,10 @@ router.patch('/:id', async (req, res) => {
  * check-in schedules all cascade via existing ON DELETE CASCADE foreign
  * keys (schema.sql) — no orphaned rows left behind. Admin-only: this is
  * destructive and unlike PATCH can't be corrected by editing again, so it
- * gets the same requireRole('admin') gate as creating staff/doctor
+ * gets the same requireRole('admin', 'super_admin') gate as creating staff/doctor
  * accounts, rather than the open access enrollment itself uses.
  */
-router.delete('/:id', requireRole('admin'), async (req, res) => {
+router.delete('/:id', requireRole('admin', 'super_admin'), async (req, res) => {
   const { id } = req.params;
 
   try {

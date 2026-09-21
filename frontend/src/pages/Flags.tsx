@@ -8,7 +8,9 @@ import {
   PillBottle,
   ScanLine,
   ShieldCheck,
+  Stethoscope,
   Thermometer,
+  UserSearch,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
@@ -26,6 +28,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/context/AuthContext';
+import { useEffectiveClinicId } from '@/context/ClinicContext';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -35,10 +38,20 @@ interface ApiFlag {
   priority: 'urgent' | 'normal';
   status: string;
   created_at: string;
-  patient_id: string;
-  patient_name: string;
+  patient_id: string | null;
+  patient_name: string | null;
   patient_phone: string | null;
   doctor_name: string | null;
+  // Only set on a 'doctor_match_failed' flag raised during self-enrollment,
+  // before any patients row exists.
+  enrollment_clinic_id: string | null;
+  context_phone: string | null;
+}
+
+interface DoctorOption {
+  id: string;
+  name: string;
+  specialty: string | null;
 }
 
 const FLAG_TYPE_META: Record<string, { label: string; icon: typeof PillBottle; className: string }> = {
@@ -47,6 +60,8 @@ const FLAG_TYPE_META: Record<string, { label: string; icon: typeof PillBottle; c
   unanswerable_question: { label: 'Unanswerable question', icon: HelpCircle, className: 'bg-secondary text-secondary-foreground' },
   no_show_risk: { label: 'No-show risk', icon: CalendarX, className: 'bg-accent text-accent-foreground' },
   ocr_low_confidence: { label: 'OCR low confidence', icon: ScanLine, className: 'bg-muted text-muted-foreground' },
+  doctor_match_failed: { label: "Doctor couldn't be matched", icon: UserSearch, className: 'bg-warning-surface text-warning-foreground' },
+  doctor_match_conflict: { label: 'Doctor match conflict', icon: Stethoscope, className: 'bg-destructive/10 text-destructive' },
 };
 
 function relativeTime(iso: string) {
@@ -127,15 +142,85 @@ function KillSwitchRow({ flag }: { flag: ApiFlag }) {
   );
 }
 
+function DoctorMatchResolver({
+  flag,
+  doctors,
+  onResolved,
+}: {
+  flag: ApiFlag;
+  doctors: DoctorOption[];
+  onResolved: (id: string) => void;
+}) {
+  const { staff } = useAuth();
+  const [doctorId, setDoctorId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const isEnrollmentTime = !flag.patient_id;
+  const endpoint = isEnrollmentTime
+    ? `/api/flags/${flag.id}/resolve-enrollment`
+    : `/api/flags/${flag.id}/resolve-doctor-match`;
+
+  async function submit() {
+    if (!doctorId || !staff) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.patch(endpoint, { staff_id: staff.id, doctor_id: doctorId });
+      onResolved(flag.id);
+      toast.success(isEnrollmentTime ? 'Patient enrolled with the selected doctor' : 'Patient reassigned to the selected doctor');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to resolve');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-background p-4">
+      <div>
+        <p className="text-sm font-semibold text-foreground">
+          {isEnrollmentTime ? 'Complete enrollment with the correct doctor' : 'Reassign to the correct doctor'}
+        </p>
+        <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
+          {isEnrollmentTime
+            ? "We couldn't confidently match a doctor for this self-enrolling patient. Pick the right one to finish enrolling them."
+            : 'A new document/voice note named a different doctor than the one already assigned. Pick which one is correct.'}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={doctorId}
+          onChange={(e) => setDoctorId(e.target.value)}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <option value="">Select doctor…</option>
+          {doctors.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}{d.specialty ? ` — ${d.specialty}` : ''}
+            </option>
+          ))}
+        </select>
+        <Button size="sm" onClick={submit} disabled={!doctorId || busy}>
+          {busy ? 'Saving…' : isEnrollmentTime ? 'Complete enrollment' : 'Reassign'}
+        </Button>
+      </div>
+      {err ? <p className="text-xs text-destructive">{err}</p> : null}
+    </div>
+  );
+}
+
 function FlagRow({
   flag,
   status,
+  doctors,
   expanded,
   onToggle,
   onResolved,
 }: {
   flag: ApiFlag;
   status: 'open' | 'resolved';
+  doctors: DoctorOption[];
   expanded: boolean;
   onToggle: () => void;
   onResolved: (id: string) => void;
@@ -189,13 +274,16 @@ function FlagRow({
             <FlagTypeBadge type={flag.flag_type} />
           </div>
           <p className="text-sm font-semibold text-foreground">
-            {flag.patient_name}
-            {flag.patient_phone ? (
-              <span className="ml-2 font-normal text-muted-foreground">{flag.patient_phone}</span>
+            {flag.patient_name ?? 'Not enrolled yet'}
+            {(flag.patient_phone ?? flag.context_phone) ? (
+              <span className="ml-2 font-normal text-muted-foreground">{flag.patient_phone ?? flag.context_phone}</span>
             ) : null}
           </p>
           <p className="text-xs text-muted-foreground">
-            {flag.doctor_name ? `Dr. ${flag.doctor_name}` : 'Unassigned — coordinator queue'} ·{' '}
+            {flag.patient_id
+              ? (flag.doctor_name ?? 'Unassigned — coordinator queue')
+              : 'Mid self-enrollment — no patient record yet'}
+            {' · '}
             {relativeTime(flag.created_at)}
           </p>
         </div>
@@ -218,7 +306,7 @@ function FlagRow({
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Patient ID</dt>
-              <dd className="text-foreground">{flag.patient_id}</dd>
+              <dd className="text-foreground">{flag.patient_id ?? '—'}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Status</dt>
@@ -226,9 +314,11 @@ function FlagRow({
             </div>
           </dl>
 
-          <KillSwitchRow flag={flag} />
+          {flag.patient_id ? <KillSwitchRow flag={flag} /> : null}
 
-          {status === 'open' ? (
+          {status === 'open' && (flag.flag_type === 'doctor_match_failed' || flag.flag_type === 'doctor_match_conflict') ? (
+            <DoctorMatchResolver flag={flag} doctors={doctors} onResolved={onResolved} />
+          ) : status === 'open' ? (
             <Button onClick={resolve} disabled={busy}>
               <CheckCircle2 className="size-4" aria-hidden />
               {busy ? 'Resolving…' : 'Resolve flag'}
@@ -242,21 +332,35 @@ function FlagRow({
 
 export default function Flags() {
   const { staff } = useAuth();
+  const clinicId = useEffectiveClinicId();
+  // For the doctor-picker dropdown: super_admin uses the switcher's
+  // selection, everyone else is always scoped to their own clinic.
+  const effectiveClinicId = staff?.role === 'super_admin' ? clinicId : (staff?.clinic_id ?? undefined);
   const [status, setStatus] = useState<'open' | 'resolved'>('open');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [flags, setFlags] = useState<ApiFlag[] | null>(null);
+  const [doctors, setDoctors] = useState<DoctorOption[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
 
   const scope = staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide';
+
+  useEffect(() => {
+    if (!effectiveClinicId) return;
+    api
+      .get<{ data: DoctorOption[] }>(`/api/doctors?clinic_id=${effectiveClinicId}`)
+      .then((r) => setDoctors(r.data))
+      .catch(() => setDoctors([]));
+  }, [effectiveClinicId]);
 
   const load = useCallback(async () => {
     if (!staff) return;
     setLoading(true);
     setError(null);
     try {
+      const clinicParam = clinicId ? `&clinic_id=${clinicId}` : '';
       const res = await api.get<{ data: ApiFlag[] }>(
-        `/api/flags?status=${status}&role=${staff.role}&staff_id=${staff.id}`,
+        `/api/flags?status=${status}&role=${staff.role}&staff_id=${staff.id}${clinicParam}`,
       );
       setFlags(res.data);
     } catch (e) {
@@ -264,7 +368,7 @@ export default function Flags() {
     } finally {
       setLoading(false);
     }
-  }, [staff, status]);
+  }, [staff, status, clinicId]);
 
   useEffect(() => {
     void load();
@@ -325,6 +429,7 @@ export default function Flags() {
                 key={flag.id}
                 flag={flag}
                 status={status}
+                doctors={doctors}
                 expanded={expandedId === flag.id}
                 onToggle={() => setExpandedId(expandedId === flag.id ? null : flag.id)}
                 onResolved={(id) => setFlags((prev) => prev?.filter((f) => f.id !== id) ?? prev)}

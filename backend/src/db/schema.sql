@@ -8,6 +8,15 @@ CREATE TABLE clinics (
   address TEXT,
   whatsapp_number VARCHAR(20) UNIQUE NOT NULL,
   voice_number VARCHAR(20),
+  -- Multi-hospital support (Super Admin Part A/B): status lets a super admin
+  -- suspend a hospital without deleting its data; whatsapp_phone_number_id is
+  -- Meta's numeric ID (distinct from the human-readable whatsapp_number) and
+  -- is how the inbound webhook resolves which clinic a message belongs to;
+  -- whatsapp_access_token is that clinic's own WABA access token, since a
+  -- single global token stops working once there's more than one WABA number.
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'onboarding')),
+  whatsapp_phone_number_id VARCHAR(50) UNIQUE,
+  whatsapp_access_token TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -50,10 +59,15 @@ CREATE TABLE patients (
 );
 
 -- Prescriptions Table
+-- Doubles as the general "clinical documents" table (QR self-enrollment spec,
+-- Section 5.2) — document_type distinguishes a prescription from a lab report
+-- or other document so both can share the same OCR/verification/audit trail
+-- without a second table.
 CREATE TABLE prescriptions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
   doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  document_type VARCHAR(20) NOT NULL DEFAULT 'prescription' CHECK (document_type IN ('prescription', 'lab_report', 'other')),
   image_url TEXT NOT NULL,
   ocr_raw_text TEXT,
   structured_json JSONB,
@@ -82,10 +96,18 @@ CREATE TABLE checkin_schedules (
 CREATE TABLE conversations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+  -- Set alongside patient_id IS NULL for messages exchanged during QR
+  -- self-enrollment (Section 4), before the patients row exists — completing
+  -- enrollment retroactively attaches these rows to the new patient_id
+  -- (see enrollment.service.js's completeEnrollment), so the full
+  -- name/consent/doctor-signal exchange still shows up in that patient's
+  -- Conversation History rather than being lost.
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  context_phone VARCHAR(20),
   channel VARCHAR(10) CHECK (channel IN ('whatsapp', 'voice')),
   direction VARCHAR(10) CHECK (direction IN ('inbound', 'outbound')),
   message_text TEXT NOT NULL,
-  intent_type VARCHAR(50), -- 'checkin_response', 'question', 'symptom_report', 'other'
+  intent_type VARCHAR(50), -- 'checkin_response', 'question', 'symptom_report', 'enrollment', 'other'
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -94,12 +116,87 @@ CREATE TABLE flags (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
   conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
-  flag_type VARCHAR(50) CHECK (flag_type IN ('missed_dose', 'symptom_reported', 'unanswerable_question', 'no_show_risk', 'ocr_low_confidence')),
+  flag_type VARCHAR(50) CHECK (flag_type IN ('missed_dose', 'symptom_reported', 'unanswerable_question', 'no_show_risk', 'ocr_low_confidence', 'doctor_match_failed', 'doctor_match_conflict')),
   priority VARCHAR(10) CHECK (priority IN ('normal', 'urgent')),
   status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'reviewed', 'resolved')),
   assigned_to UUID REFERENCES staff_users(id) ON DELETE SET NULL,
+  -- A 'doctor_match_failed' flag raised during QR self-enrollment (Section
+  -- 6.4) has no patient yet — clinic_id + context_phone are how staff find
+  -- their way back to the pending_enrollments row to resolve it (see
+  -- POST /api/flags/:id/resolve-enrollment). NULL for every other flag type,
+  -- which always has patient_id set instead.
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  context_phone VARCHAR(20),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   resolved_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Doctor Match Log Table (QR self-enrollment spec, Section 8.1)
+-- Every automatic doctor-match attempt (from OCR or voice) and every staff
+-- correction of one gets logged here — the audit trail the alias table below
+-- is built from. Defined before pending_enrollments since that table
+-- references it.
+CREATE TABLE doctor_match_log (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  patient_id UUID REFERENCES patients(id) ON DELETE SET NULL,
+  -- Set alongside patient_id IS NULL, i.e. a match attempt made during
+  -- enrollment before the patients row exists — lets a later
+  -- resolve-enrollment call find the right pending_enrollments row.
+  context_phone VARCHAR(20),
+  source VARCHAR(10) CHECK (source IN ('ocr', 'voice')),
+  raw_input TEXT NOT NULL,
+  matched_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  match_confidence VARCHAR(10),
+  staff_corrected_to UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Pending Enrollments Table (QR self-enrollment spec, Section 4.1)
+-- A row here is a patient who scanned the hospital QR and has started but not
+-- finished self-enrolling over WhatsApp. Deliberately separate from `patients`
+-- — nothing is inserted into `patients` until a name is captured AND consent
+-- is explicit, so every existing assumption elsewhere in the codebase ("a
+-- patients row means a consenting, enrolled patient") keeps holding.
+CREATE TABLE pending_enrollments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  phone VARCHAR(20) NOT NULL,
+  stage VARCHAR(30) NOT NULL DEFAULT 'awaiting_name',
+    -- 'awaiting_name' -> 'awaiting_consent' -> 'awaiting_doctor_signal' -> 'complete'
+  name VARCHAR(255),
+  language_pref VARCHAR(5),
+  consent_given BOOLEAN DEFAULT false,
+  -- Set while stage = 'awaiting_doctor_signal' and the matching engine found a
+  -- low-confidence best guess that needs a Yes/No confirmation from the
+  -- patient before it's trusted (Section 6.4). Not part of the spec's literal
+  -- stage list, but needed to track which doctor a pending "is that right?"
+  -- reply refers to, and which doctor_match_log row to attach the outcome to.
+  candidate_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL,
+  candidate_match_log_id UUID REFERENCES doctor_match_log(id) ON DELETE SET NULL,
+  -- A prescription/report photo sent before the doctor match is confirmed is
+  -- saved immediately with patient_id NULL (allowed — see prescriptions
+  -- table above) so it isn't lost; this points at that row so it can be
+  -- attached to the patient once enrollment completes, even if completion
+  -- happens later via a text Yes/No reply rather than the image itself.
+  candidate_document_id UUID REFERENCES prescriptions(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (clinic_id, phone)
+);
+
+-- Doctor Aliases Table (QR self-enrollment spec, Section 8.2)
+-- Per-clinic dictionary of nicknames/mispronunciations/informal titles that
+-- have already been confirmed to mean a given doctor. The matching engine
+-- checks this table BEFORE falling back to generic fuzzy matching — this is
+-- the mechanism by which doctor-matching accuracy at a given hospital
+-- improves the longer the product runs there.
+CREATE TABLE doctor_aliases (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  doctor_id UUID REFERENCES doctors(id) ON DELETE CASCADE,
+  alias TEXT NOT NULL,
+  learned_from VARCHAR(20) CHECK (learned_from IN ('staff_correction', 'confirmed_match')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (doctor_id, alias)
 );
 
 -- Pilot Requests Table (public marketing site "Request a Pilot" form submissions)

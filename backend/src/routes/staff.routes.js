@@ -5,11 +5,17 @@ const { hashPassword, requireRole } = require('../services/auth.service');
 
 /**
  * GET /api/staff?clinic_id=
- * Lists staff accounts for a clinic (Settings page). Admin-only in the UI,
- * not enforced server-side here since it returns no password data.
+ * Lists staff accounts for a clinic (Settings page). Requires
+ * authentication — this used to be reachable with no token at all, trusting
+ * whatever clinic_id (or none) the caller passed; harmless with one clinic
+ * in the deployment, a real cross-tenant leak once there's more than one.
+ * Super admin can omit clinic_id (sees every clinic) or pass any clinic_id
+ * (clinic-switcher view); everyone else is pinned to their own clinic
+ * regardless of what clinic_id they pass.
  */
-router.get('/', async (req, res) => {
-  const { clinic_id } = req.query;
+router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+  const isSuperAdmin = req.user.role === 'super_admin';
+  const clinic_id = isSuperAdmin ? req.query.clinic_id : req.user.clinic_id;
 
   try {
     const query = clinic_id
@@ -28,7 +34,7 @@ router.get('/', async (req, res) => {
  * POST /api/staff
  * Creates a new staff account. Requires an authenticated admin.
  */
-router.post('/', requireRole('admin'), async (req, res) => {
+router.post('/', requireRole('admin', 'super_admin'), async (req, res) => {
   const { clinic_id, name, role, phone, password, notify_on_flag = true } = req.body;
 
   if (!clinic_id || !name || !role || !phone || !password) {

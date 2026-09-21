@@ -14,7 +14,7 @@ const checkinQueue = new Queue('patient-checkins', { connection });
 const checkinWorker = new Worker(
   'patient-checkins',
   async (job) => {
-    const { scheduleId, patientId, phone, patientName, languagePref } = job.data;
+    const { scheduleId, patientId, phone, patientName, languagePref, clinicId } = job.data;
 
     // Verify patient hasn't activated the kill switch (Section 6.3)
     const patientCheck = await pool.query(
@@ -29,7 +29,7 @@ const checkinWorker = new Worker(
     }
 
     // WhatsApp requires an approved template for all business-initiated messages
-    await sendWhatsAppTemplate(phone, 'patient_checkin', 'en', [patientName || 'there']);
+    await sendWhatsAppTemplate(phone, 'patient_checkin', 'en', [patientName || 'there'], clinicId);
 
     // Update DB: bump next_checkin_at by frequency_days
     await pool.query(
@@ -65,6 +65,7 @@ async function scanAndScheduleDueCheckins() {
         p.name AS patient_name,
         p.phone,
         p.language_pref,
+        p.clinic_id,
         pr.structured_json
       FROM checkin_schedules cs
       JOIN patients p ON cs.patient_id = p.id
@@ -85,6 +86,7 @@ async function scanAndScheduleDueCheckins() {
           patientName: row.patient_name,
           phone: row.phone,
           languagePref: row.language_pref,
+          clinicId: row.clinic_id,
           medicines: row.structured_json?.medicines || [],
         },
         { jobId: `checkin-${row.schedule_id}-${Date.now()}` }

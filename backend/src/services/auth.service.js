@@ -54,4 +54,8 @@ function requireRole(...allowedRoles) {
   };
 }
 
-module.exports = { hashPassword, verifyPassword, issueToken, verifyToken, attachUser, requireRole };
+function isSuperAdmin(req) {
+  return req.user?.role === 'super_admin';
+}
+
+module.exports = { hashPassword, verifyPassword, issueToken, verifyToken, attachUser, requireRole, isSuperAdmin };

@@ -1,7 +1,8 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { Activity, Flag, LayoutDashboard, LogOut, Pill, Settings, Users } from 'lucide-react';
+import { Activity, Building2, Flag, LayoutDashboard, LogOut, Pill, Settings, Users } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { useClinicSwitcher } from '@/context/ClinicContext';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -10,6 +11,7 @@ const NAV = [
   { to: '/app/prescriptions', label: 'Prescriptions', icon: Pill, end: false },
   { to: '/app/patients', label: 'Patients', icon: Users, end: false },
   { to: '/app/settings', label: 'Settings', icon: Settings, end: false },
+  { to: '/app/clinics', label: 'Hospitals', icon: Building2, end: false },
 ] as const;
 
 const ROLE_LABEL: Record<string, string> = {
@@ -17,7 +19,30 @@ const ROLE_LABEL: Record<string, string> = {
   coordinator: 'Care Coordinator',
   nurse: 'Nurse',
   doctor: 'Doctor',
+  super_admin: 'Super Admin',
 };
+
+// Clinic-switcher dropdown shown only to super_admin — picks which
+// hospital's data the rest of the console (Dashboard/Patients/Flags/
+// Prescriptions) is currently scoped to (Super Admin spec, A8).
+function ClinicSwitcher() {
+  const { clinics, selectedClinicId, setSelectedClinicId } = useClinicSwitcher();
+  if (clinics.length === 0) return null;
+  return (
+    <select
+      value={selectedClinicId ?? ''}
+      onChange={(e) => setSelectedClinicId(e.target.value || null)}
+      aria-label="Viewing hospital"
+      className="hidden rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:block"
+    >
+      {clinics.map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.name}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 function initials(name: string) {
   return name
@@ -42,9 +67,12 @@ export function AppShell({
   const { staff, logout } = useAuth();
   const location = useLocation();
 
-  const visibleNav = NAV.filter(
-    (item) => item.to !== '/app/settings' || staff?.role === 'admin',
-  );
+  const visibleNav = NAV.filter((item) => {
+    if (item.to === '/app/clinics') return staff?.role === 'super_admin';
+    // Super admin manages hospitals via /app/clinics, not the single-clinic Settings page.
+    if (item.to === '/app/settings') return staff?.role === 'admin';
+    return true;
+  });
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -112,9 +140,13 @@ export function AppShell({
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-3">
-            <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
-              {staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide'}
-            </span>
+            {staff?.role === 'super_admin' ? (
+              <ClinicSwitcher />
+            ) : (
+              <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
+                {staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide'}
+              </span>
+            )}
             <div className="text-right leading-tight">
               <span className="block text-sm font-semibold text-foreground">{staff?.name}</span>
               <span className="block text-xs text-muted-foreground">
