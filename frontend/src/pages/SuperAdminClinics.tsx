@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
-import { Building2, PlusCircle, Printer, QrCode } from 'lucide-react';
+import { Building2, Pencil, PlusCircle, Printer, QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
 import { LoadingState, EmptyState, ErrorState } from '@/components/app/states';
@@ -126,6 +126,125 @@ function AddHospitalSheet({
   );
 }
 
+const emptyEditForm = {
+  name: '',
+  address: '',
+  whatsapp_number: '',
+  whatsapp_phone_number_id: '',
+  whatsapp_access_token: '',
+};
+
+// Edit an existing hospital (name/address/WhatsApp credentials) — PATCH
+// /api/clinics/:id already existed server-side, this was just missing a UI.
+function EditHospitalSheet({
+  clinic,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  clinic: ClinicSummary | null;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState(emptyEditForm);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!clinic) return;
+    setForm({
+      name: clinic.name ?? '',
+      address: clinic.address ?? '',
+      whatsapp_number: clinic.whatsapp_number ?? '',
+      whatsapp_phone_number_id: clinic.whatsapp_phone_number_id ?? '',
+      whatsapp_access_token: '',
+    });
+    setErr(null);
+  }, [clinic]);
+
+  const update =
+    (key: keyof typeof emptyEditForm) =>
+    (e: React.ChangeEvent<HTMLInputElement>) =>
+      setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!clinic) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const payload: Record<string, string> = {
+        name: form.name,
+        address: form.address,
+        whatsapp_number: form.whatsapp_number,
+        whatsapp_phone_number_id: form.whatsapp_phone_number_id,
+      };
+      // An empty token field means "keep the existing one" — only send it
+      // when the admin actually typed a replacement, so we never blank out
+      // a working credential by accident.
+      if (form.whatsapp_access_token) {
+        payload.whatsapp_access_token = form.whatsapp_access_token;
+      }
+      await api.patch(`/api/clinics/${clinic.id}`, payload);
+      toast.success(`${form.name} updated`);
+      onOpenChange(false);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to update hospital');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Edit {clinic?.name}</SheetTitle>
+        </SheetHeader>
+        <form onSubmit={onSubmit} className="mt-6 space-y-5 px-1">
+          <div className="space-y-2">
+            <Label htmlFor="eName">Hospital name</Label>
+            <Input id="eName" required value={form.name} onChange={update('name')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="eAddress">Address</Label>
+            <Input id="eAddress" value={form.address} onChange={update('address')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="eWaNumber">WhatsApp number</Label>
+            <Input id="eWaNumber" required value={form.whatsapp_number} onChange={update('whatsapp_number')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="eWaId">WhatsApp phone_number_id</Label>
+            <Input
+              id="eWaId"
+              value={form.whatsapp_phone_number_id}
+              onChange={update('whatsapp_phone_number_id')}
+              placeholder="From Meta Business Manager"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="eWaToken">WhatsApp access token</Label>
+            <Input
+              id="eWaToken"
+              type="password"
+              value={form.whatsapp_access_token}
+              onChange={update('whatsapp_access_token')}
+              placeholder="Leave blank to keep existing"
+            />
+          </div>
+          {err ? <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p> : null}
+          <Button type="submit" className="w-full" disabled={busy}>
+            {busy ? 'Saving…' : 'Save changes'}
+          </Button>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 // QR self-enrollment spec, Section 2: one QR per hospital, encoding a plain
 // wa.me deep link — reception/waiting-room/discharge-slip poster, generated
 // and displayed here (Add Hospital is the natural place for it, per the
@@ -211,6 +330,7 @@ export default function SuperAdminClinics() {
   const { clinics, loading, refresh, selectedClinicId, setSelectedClinicId } = useClinicSwitcher();
   const [addOpen, setAddOpen] = useState(false);
   const [qrClinic, setQrClinic] = useState<ClinicSummary | null>(null);
+  const [editClinic, setEditClinic] = useState<ClinicSummary | null>(null);
   const [error] = useState<unknown>(null);
 
   async function toggleSuspend(clinic: ClinicSummary) {
@@ -237,6 +357,12 @@ export default function SuperAdminClinics() {
     >
       <AddHospitalSheet open={addOpen} onOpenChange={setAddOpen} onAdded={refresh} />
       <HospitalQrSheet clinic={qrClinic} open={!!qrClinic} onOpenChange={(v) => !v && setQrClinic(null)} />
+      <EditHospitalSheet
+        clinic={editClinic}
+        open={!!editClinic}
+        onOpenChange={(v) => !v && setEditClinic(null)}
+        onSaved={refresh}
+      />
 
       {loading ? (
         <LoadingState rows={3} label="Loading hospitals…" />
@@ -283,6 +409,10 @@ export default function SuperAdminClinics() {
                   <td className="px-5 py-3 text-muted-foreground">{c.doctor_count}</td>
                   <td className="px-5 py-3 text-right">
                     <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={() => setEditClinic(c)}>
+                        <Pencil className="mr-1.5 size-3.5" />
+                        Edit
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => setQrClinic(c)}>
                         <QrCode className="mr-1.5 size-3.5" />
                         QR

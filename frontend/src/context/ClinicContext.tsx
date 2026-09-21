@@ -5,7 +5,9 @@ import { api } from '../lib/api';
 export interface ClinicSummary {
   id: string;
   name: string;
+  address?: string | null;
   whatsapp_number: string;
+  whatsapp_phone_number_id?: string | null;
   status: 'active' | 'suspended' | 'onboarding';
   patient_count: number;
   open_flag_count: number;
