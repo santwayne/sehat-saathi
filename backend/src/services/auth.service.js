@@ -2,7 +2,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const TOKEN_TTL = '12h';
+// No expiry, by explicit request — a leaked token never auto-expires, so
+// rotate JWT_SECRET (invalidates every issued token) if one is ever suspected
+// of being compromised.
 
 async function hashPassword(plainPassword) {
   return bcrypt.hash(plainPassword, 10);
@@ -15,8 +17,7 @@ async function verifyPassword(plainPassword, passwordHash) {
 function issueToken(staff) {
   return jwt.sign(
     { id: staff.id, role: staff.role, clinic_id: staff.clinic_id, name: staff.name },
-    JWT_SECRET,
-    { expiresIn: TOKEN_TTL }
+    JWT_SECRET
   );
 }
 
