@@ -16,10 +16,19 @@ router.post('/login', async (req, res) => {
   }
 
   try {
+    // Match on digits only, and treat a bare 10-digit number and the same
+    // number with an India country code (91) as equal — an account created as
+    // "+919876543210" must still sign in with "9876543210" (and vice versa).
+    // An exact match wins if several rows qualify.
+    const digits = String(phone).replace(/\D/g, '');
+    const national = digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
     const { rows } = await pool.query(
       `SELECT id, clinic_id, name, role, phone, password_hash
-       FROM staff_users WHERE phone = $1`,
-      [phone]
+       FROM staff_users
+       WHERE regexp_replace(phone, '\\D', '', 'g') IN ($1, $2, $3)
+       ORDER BY (phone = $4) DESC
+       LIMIT 1`,
+      [digits, national, `91${national}`, phone]
     );
     const staff = rows[0];
 
