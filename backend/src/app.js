@@ -16,6 +16,7 @@ const cronRoutes = require('./routes/cron.routes');
 const bedRoutes = require('./routes/beds.routes');
 const pharmacyRoutes = require('./routes/pharmacy.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
+const voiceRoutes = require('./routes/voice.routes');
 
 const app = express();
 app.use(cors());
@@ -39,6 +40,7 @@ app.use('/api/clinics', clinicRoutes);
 app.use('/api/pilot-requests', pilotRequestRoutes);
 app.use('/api/beds', bedRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/voice', voiceRoutes);
 // /api/pharmacy-partners and /api/refill-orders
 app.use('/api', pharmacyRoutes);
 // Cron-triggered endpoints (Vercel Cron hits these — see vercel.json). On AWS,

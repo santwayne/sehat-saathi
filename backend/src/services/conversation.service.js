@@ -31,11 +31,11 @@ OUTPUT SCHEMA (JSON):
 /**
  * Logs a conversation turn to the audit trail (Section 6.3 requirement).
  */
-async function logConversation(patientId, direction, text, intentType, senderType) {
+async function logConversation(patientId, direction, text, intentType, senderType, channel = 'whatsapp') {
   const { rows } = await pool.query(
     `INSERT INTO conversations (patient_id, channel, direction, message_text, intent_type, sender_type)
-     VALUES ($1, 'whatsapp', $2, $3, $4, $5) RETURNING id`,
-    [patientId, direction, text, intentType || null, senderType || null]
+     VALUES ($1, $6, $2, $3, $4, $5) RETURNING id`,
+    [patientId, direction, text, intentType || null, senderType || null, channel]
   );
   return rows[0].id;
 }
@@ -49,7 +49,7 @@ async function logConversation(patientId, direction, text, intentType, senderTyp
  *   prescription-scoped engine and safety rules, but never counted as a
  *   check-in response / missed-dose signal (only the patient's own replies are).
  */
-async function processInboundMessage(patientId, messageText, { senderType = 'patient' } = {}) {
+async function processInboundMessage(patientId, messageText, { senderType = 'patient', channel = 'whatsapp' } = {}) {
   const isFamily = senderType === 'family';
   // 1. Fetch patient details and active prescription
   const patientQuery = `
@@ -75,7 +75,7 @@ async function processInboundMessage(patientId, messageText, { senderType = 'pat
 
   // 2. Check for explicit urgent symptom keywords first (code-level check)
   if (isUrgentKeywordPresent(messageText)) {
-    const conversationId = await logConversation(patient.id, 'inbound', messageText, 'symptom_report', senderType);
+    const conversationId = await logConversation(patient.id, 'inbound', messageText, 'symptom_report', senderType, channel);
 
     const flagId = await createEscalationFlag({
       patientId: patient.id,
@@ -88,12 +88,12 @@ async function processInboundMessage(patientId, messageText, { senderType = 'pat
 
     const replyText = t('urgent', patient.language_pref);
 
-    await logConversation(patient.id, 'outbound', replyText, 'symptom_report', senderType);
+    await logConversation(patient.id, 'outbound', replyText, 'symptom_report', senderType, channel);
 
     return { replyText, flagged: true, flagId };
   }
 
-  const inboundConversationId = await logConversation(patient.id, 'inbound', messageText, 'other', senderType);
+  const inboundConversationId = await logConversation(patient.id, 'inbound', messageText, 'other', senderType, channel);
 
   // 3. Call Claude with patient's prescription scope
   const promptContent = `
@@ -144,7 +144,7 @@ Message: "${messageText}"
 
     const fallbackReply = t('forwarded', patient.language_pref);
 
-    await logConversation(patient.id, 'outbound', fallbackReply, flagType, senderType);
+    await logConversation(patient.id, 'outbound', fallbackReply, flagType, senderType, channel);
 
     return { replyText: fallbackReply, flagged: true };
   }
@@ -172,7 +172,7 @@ Message: "${messageText}"
     }
   }
 
-  await logConversation(patient.id, 'outbound', parsedResponse.reply_text, parsedResponse.intent, senderType);
+  await logConversation(patient.id, 'outbound', parsedResponse.reply_text, parsedResponse.intent, senderType, channel);
 
   return { replyText: parsedResponse.reply_text, flagged: false };
 }

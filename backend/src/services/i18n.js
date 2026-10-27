@@ -18,6 +18,27 @@ const LANGUAGES = {
 };
 
 const MESSAGES = {
+  // Spoken on a voice check-in call; keys are pressed or spoken, so no "reply".
+  checkinVoice: {
+    hi: 'नमस्ते! यह आपके क्लिनिक की ओर से चेक-इन कॉल है। क्या आपने आज अपनी दवाइयां समय पर ली हैं? हाँ के लिए 1 दबाएं, नहीं या खुराक छूट गई हो तो 2 दबाएं।',
+    pa: 'ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ! ਇਹ ਤੁਹਾਡੇ ਕਲਿਨਿਕ ਵੱਲੋਂ ਚੈੱਕ-ਇਨ ਕਾਲ ਹੈ। ਕੀ ਤੁਸੀਂ ਅੱਜ ਆਪਣੀਆਂ ਦਵਾਈਆਂ ਸਮੇਂ ਸਿਰ ਲਈਆਂ ਹਨ? ਹਾਂ ਲਈ 1 ਦਬਾਓ, ਨਹੀਂ ਜਾਂ ਖੁਰਾਕ ਖੁੰਝ ਗਈ ਹੋਵੇ ਤਾਂ 2 ਦਬਾਓ।',
+    en: 'Hello! This is a check-in call from your clinic. Did you take your medicines on time today? Press 1 for yes, or press 2 if you missed a dose.',
+    mr: 'नमस्कार! हा तुमच्या क्लिनिककडून चेक-इन कॉल आहे. तुम्ही आज तुमची औषधे वेळेवर घेतली का? हो साठी 1 दाबा, नाही किंवा डोस चुकला असल्यास 2 दाबा.',
+    gu: 'નમસ્તે! આ તમારા ક્લિનિક તરફથી ચેક-ઇન કૉલ છે. શું તમે આજે તમારી દવાઓ સમયસર લીધી? હા માટે 1 દબાવો, ના અથવા ડોઝ ચૂકી ગયા હો તો 2 દબાવો.',
+    bn: 'নমস্কার! এটি আপনার ক্লিনিকের চেক-ইন কল। আপনি কি আজ সময়মতো ওষুধ খেয়েছেন? হ্যাঁ হলে 1 চাপুন, না বা ডোজ মিস হলে 2 চাপুন।',
+    ta: 'வணக்கம்! இது உங்கள் கிளினிக்கிலிருந்து வரும் செக்-இன் அழைப்பு. இன்று மருந்துகளை நேரத்திற்கு எடுத்துக்கொண்டீர்களா? ஆம் என்றால் 1ஐ அழுத்தவும், இல்லை அல்லது டோஸ் தவறினால் 2ஐ அழுத்தவும்.',
+    te: 'నమస్కారం! ఇది మీ క్లినిక్ నుండి చెక్-ఇన్ కాల్. మీరు ఈరోజు మందులను సమయానికి తీసుకున్నారా? అవును అయితే 1 నొక్కండి, లేదు లేదా డోస్ మిస్ అయితే 2 నొక్కండి.',
+  },
+  voiceThanks: {
+    hi: 'धन्यवाद। आपका जवाब क्लिनिक को भेज दिया गया है। अपना ध्यान रखिए।',
+    pa: 'ਧੰਨਵਾਦ। ਤੁਹਾਡਾ ਜਵਾਬ ਕਲਿਨਿਕ ਨੂੰ ਭੇਜ ਦਿੱਤਾ ਗਿਆ ਹੈ। ਆਪਣਾ ਖ਼ਿਆਲ ਰੱਖੋ।',
+    en: 'Thank you. Your response has been shared with the clinic. Take care.',
+    mr: 'धन्यवाद. तुमचे उत्तर क्लिनिकला कळवले आहे. काळजी घ्या.',
+    gu: 'આભાર. તમારો જવાબ ક્લિનિકને મોકલવામાં આવ્યો છે. કાળજી રાખજો.',
+    bn: 'ধন্যবাদ। আপনার উত্তর ক্লিনিককে জানানো হয়েছে। নিজের যত্ন নিন।',
+    ta: 'நன்றி. உங்கள் பதில் கிளினிக்குக்கு தெரிவிக்கப்பட்டது. உடல்நலத்தைப் பார்த்துக்கொள்ளுங்கள்.',
+    te: 'ధన్యవాదాలు. మీ సమాధానం క్లినిక్‌కు తెలియజేయబడింది. జాగ్రత్తగా ఉండండి.',
+  },
   checkin: {
     hi: 'नमस्ते! यह आपके क्लिनिक से चेक-इन है। क्या आपने आज अपनी दवाइयां समय पर ली हैं? उत्तर दें: 1 (हाँ), 2 (नहीं/खुराक छूट गई)।',
     pa: 'ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ! ਇਹ ਤੁਹਾਡੇ ਕਲਿਨਿਕ ਤੋਂ ਚੈੱਕ-ਇਨ ਹੈ। ਕੀ ਤੁਸੀਂ ਅੱਜ ਆਪਣੀਆਂ ਦਵਾਈਆਂ ਸਮੇਂ ਸਿਰ ਲਈਆਂ ਹਨ? ਜਵਾਬ ਦਿਓ: 1 (ਹਾਂ), 2 (ਨਹੀਂ)।',
@@ -70,5 +91,7 @@ function languageName(code) {
 // localized text; the BullMQ worker logs a "patient_checkin template sent" line).
 const CHECKIN_PROMPT_TEXTS = Object.values(MESSAGES.checkin);
 const CHECKIN_TEMPLATE_LOG_PATTERN = 'patient_checkin template sent%';
+// Voice check-in calls log their prompt with this prefix.
+const VOICE_CHECKIN_LOG_PREFIX = '[Voice check-in] ';
 
-module.exports = { LANGUAGES, isSupportedLanguage, t, languageName, CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN };
+module.exports = { LANGUAGES, isSupportedLanguage, t, languageName, CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN, VOICE_CHECKIN_LOG_PREFIX };

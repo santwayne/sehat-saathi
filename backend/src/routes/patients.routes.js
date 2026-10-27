@@ -5,6 +5,7 @@ const { sendWhatsAppTemplate, normalizePhone, isValidPhone } = require('../servi
 const { requireRole, canAccessClinic } = require('../services/auth.service');
 const { isSupportedLanguage } = require('../services/i18n');
 const { inviteFamilyMember } = require('../services/family.service');
+const abdm = require('../services/abdm.service');
 
 /**
  * GET /api/patients
@@ -64,6 +65,10 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_ad
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Must stay above '/:id' or it would be captured as an id.
+router.get('/abdm-status', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), (req, res) =>
+  res.status(200).json({ configured: abdm.isConfigured() }));
 
 /**
  * GET /api/patients/:id
@@ -148,6 +153,9 @@ router.post('/', async (req, res) => {
   if (language_pref !== undefined && !isSupportedLanguage(language_pref)) {
     return res.status(400).json({ error: 'Unsupported language.' });
   }
+  if (preferred_channel !== undefined && !['whatsapp', 'voice'].includes(preferred_channel)) {
+    return res.status(400).json({ error: 'preferred_channel must be whatsapp or voice.' });
+  }
 
   // Normalize to digits-only so DB matches WhatsApp sender IDs (e.g. "917087064479")
   const cleanPhone = normalizePhone(phone);
@@ -230,6 +238,7 @@ router.patch('/:id', async (req, res) => {
     values.push(language_pref);
   }
   if (preferred_channel !== undefined) {
+    if (!['whatsapp', 'voice'].includes(preferred_channel)) return res.status(400).json({ error: 'preferred_channel must be whatsapp or voice.' });
     setClauses.push(`preferred_channel = $${i++}`);
     values.push(preferred_channel);
   }
@@ -388,8 +397,8 @@ router.post('/:id/abha', requireRole(...WRITE_ROLES), async (req, res) => {
     if (!patient) return;
     const number = abha_number ? abha_number.replace(/\D/g, '').replace(/^(\d{2})(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3-$4') : null;
     const { rows } = await pool.query(
-      `UPDATE patients SET abha_number = $1, abha_address = $2, abha_linked_at = NOW()
-       WHERE id = $3 RETURNING id, abha_number, abha_address, abha_linked_at`,
+      `UPDATE patients SET abha_number = $1, abha_address = $2, abha_linked_at = NOW(), abha_verified_by_abdm = false
+       WHERE id = $3 RETURNING id, abha_number, abha_address, abha_linked_at, abha_verified_by_abdm`,
       [number, abha_address ? abha_address.trim().toLowerCase() : null, patient.id]
     );
     return res.status(200).json({ success: true, data: rows[0] });
@@ -399,12 +408,47 @@ router.post('/:id/abha', requireRole(...WRITE_ROLES), async (req, res) => {
   }
 });
 
+/**
+ * Real ABHA creation through ABDM (Aadhaar OTP). The Aadhaar number is passed
+ * straight to ABDM and never stored or logged. 503 until ABDM credentials are
+ * configured, so the manual /abha route above remains the fallback.
+ */
+function sendAbdmError(res, err) {
+  if (err instanceof abdm.AbdmError) return res.status(err.status || 502).json({ error: err.message });
+  console.error('ABDM enrolment failed:', err.message);
+  return res.status(500).json({ error: 'Internal server error' });
+}
+
+router.post('/:id/abha/link-init', requireRole(...WRITE_ROLES), async (req, res) => {
+  if (req.body.patient_consented !== true) {
+    return res.status(400).json({ error: 'The patient must consent to creating/linking their ABHA.' });
+  }
+  try {
+    const patient = await loadAccessiblePatient(req, res);
+    if (!patient) return;
+    return res.status(200).json({ success: true, ...(await abdm.initiateAbhaEnrolment(patient.id, req.body.aadhaar)) });
+  } catch (err) {
+    return sendAbdmError(res, err);
+  }
+});
+
+router.post('/:id/abha/verify-otp', requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const patient = await loadAccessiblePatient(req, res);
+    if (!patient) return;
+    const mobile = req.body.mobile ? normalizePhone(req.body.mobile).slice(-10) : undefined;
+    return res.status(200).json({ success: true, data: await abdm.verifyAbhaOtp(patient.id, req.body.otp, mobile) });
+  } catch (err) {
+    return sendAbdmError(res, err);
+  }
+});
+
 router.delete('/:id/abha', requireRole(...WRITE_ROLES), async (req, res) => {
   try {
     const patient = await loadAccessiblePatient(req, res);
     if (!patient) return;
     await pool.query(
-      `UPDATE patients SET abha_number = NULL, abha_address = NULL, abha_linked_at = NULL, abdm_consent_artefact_id = NULL WHERE id = $1`,
+      `UPDATE patients SET abha_number = NULL, abha_address = NULL, abha_linked_at = NULL, abha_verified_by_abdm = false, abdm_consent_artefact_id = NULL WHERE id = $1`,
       [patient.id]
     );
     return res.status(200).json({ success: true });

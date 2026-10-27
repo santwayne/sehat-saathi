@@ -1,6 +1,7 @@
 const { pool } = require('../db');
 const { sendWhatsAppMessage } = require('./whatsapp.service');
 const { t } = require('./i18n');
+const voice = require('./voice.service');
 
 // Vercel serverless functions can't host a long-lived BullMQ Worker (see
 // scheduler.service.js, used on the AWS/persistent-process deployment instead).
@@ -9,7 +10,7 @@ const { t } = require('./i18n');
 
 async function sendDueCheckinsDirectly() {
   const { rows } = await pool.query(`
-    SELECT cs.id AS schedule_id, cs.patient_id, p.phone, p.language_pref, p.clinic_id
+    SELECT cs.id AS schedule_id, cs.patient_id, p.phone, p.language_pref, p.clinic_id, p.preferred_channel
     FROM checkin_schedules cs
     JOIN patients p ON cs.patient_id = p.id
     WHERE cs.active = true
@@ -22,7 +23,19 @@ async function sendDueCheckinsDirectly() {
   for (const row of rows) {
     const textPrompt = t('checkin', row.language_pref);
     try {
-      await sendWhatsAppMessage(row.phone, textPrompt, row.clinic_id);
+      // Patients who prefer voice get a call when Twilio is set up; if the call
+      // can't be placed (or voice isn't configured) they still get the WhatsApp
+      // check-in rather than silently missing it.
+      let calledInstead = false;
+      if (row.preferred_channel === 'voice' && voice.isConfigured()) {
+        try {
+          await voice.placeCheckinCall({ id: row.patient_id, phone: row.phone, language_pref: row.language_pref });
+          calledInstead = true;
+        } catch (callErr) {
+          console.error(`Voice check-in call failed for patient ${row.patient_id}, falling back to WhatsApp:`, callErr.message);
+        }
+      }
+      if (!calledInstead) await sendWhatsAppMessage(row.phone, textPrompt, row.clinic_id);
 
       await pool.query(
         `UPDATE checkin_schedules
@@ -31,11 +44,13 @@ async function sendDueCheckinsDirectly() {
         [row.schedule_id]
       );
 
-      await pool.query(
-        `INSERT INTO conversations (patient_id, channel, direction, message_text, intent_type)
-         VALUES ($1, 'whatsapp', 'outbound', $2, 'checkin_response')`,
-        [row.patient_id, textPrompt]
-      );
+      if (!calledInstead) {
+        await pool.query(
+          `INSERT INTO conversations (patient_id, channel, direction, message_text, intent_type)
+           VALUES ($1, 'whatsapp', 'outbound', $2, 'checkin_response')`,
+          [row.patient_id, textPrompt]
+        );
+      }
       sent += 1;
     } catch (err) {
       console.error(`Failed to send check-in for schedule ${row.schedule_id}:`, err);

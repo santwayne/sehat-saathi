@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { requireRole } = require('../services/auth.service');
-const { CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN } = require('../services/i18n');
+const { CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN, VOICE_CHECKIN_LOG_PREFIX } = require('../services/i18n');
 
 // Hospital analytics on adherence (roadmap "Later" item). Everything here is
 // derived from data the product already records. A check-in counts as
@@ -23,8 +23,8 @@ router.get('/adherence', requireRole('admin', 'coordinator', 'nurse', 'super_adm
   // $1 = days, $2 = clinic (NULL = all clinics, super_admin only)
   const params = [days, clinicId];
   // Separate params for the two check-in queries (the others don't take them).
-  const checkinParams = [days, clinicId, CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN];
-  const isCheckinPrompt = `c.direction = 'outbound' AND (c.message_text = ANY($3::text[]) OR c.message_text LIKE $4)`;
+  const checkinParams = [days, clinicId, CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN, `${VOICE_CHECKIN_LOG_PREFIX}%`];
+  const isCheckinPrompt = `c.direction = 'outbound' AND (c.message_text = ANY($3::text[]) OR c.message_text LIKE $4 OR c.message_text LIKE $5)`;
   const patientScope = '($2::uuid IS NULL OR p.clinic_id = $2)';
 
   try {

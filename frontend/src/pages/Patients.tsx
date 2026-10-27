@@ -45,6 +45,7 @@ interface PatientRow {
   name: string;
   phone: string;
   language_pref: string;
+  preferred_channel?: string;
   consent_given: boolean;
   kill_switch_active: boolean;
   assigned_doctor_id: string | null;
@@ -52,6 +53,7 @@ interface PatientRow {
   bed_label?: string | null;
   abha_number?: string | null;
   abha_address?: string | null;
+  abha_verified_by_abdm?: boolean;
   created_at: string;
 }
 
@@ -103,7 +105,7 @@ function fmt(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-const emptyForm = { name: '', phone: '', language_pref: 'hi', assigned_doctor_id: '', consent_given: false };
+const emptyForm = { name: '', phone: '', language_pref: 'hi', preferred_channel: 'whatsapp', assigned_doctor_id: '', consent_given: false };
 
 function AddPatientSheet({
   open,
@@ -149,6 +151,7 @@ function AddPatientSheet({
         name: form.name,
         phone: form.phone,
         language_pref: form.language_pref,
+        preferred_channel: form.preferred_channel,
         assigned_doctor_id: form.assigned_doctor_id || null,
         consent_given: form.consent_given,
       });
@@ -191,6 +194,17 @@ function AddPatientSheet({
               {Object.entries(LANG_LABELS).map(([code, l]) => (
                 <option key={code} value={code}>{l.label}</option>
               ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Check-in channel</label>
+            <select
+              value={form.preferred_channel}
+              onChange={update('preferred_channel')}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="whatsapp">WhatsApp messages</option>
+              <option value="voice">Voice call (falls back to WhatsApp)</option>
             </select>
           </div>
           {doctors.length > 0 && (
@@ -244,6 +258,7 @@ function EditPatientForm({
     name: patient.name,
     phone: patient.phone,
     language_pref: patient.language_pref,
+    preferred_channel: patient.preferred_channel ?? 'whatsapp',
     assigned_doctor_id: patient.assigned_doctor_id ?? '',
   });
   const [busy, setBusy] = useState(false);
@@ -260,6 +275,7 @@ function EditPatientForm({
         name: form.name,
         phone: form.phone,
         language_pref: form.language_pref,
+        preferred_channel: form.preferred_channel,
         assigned_doctor_id: form.assigned_doctor_id || null,
       });
       onSaved(res.data);
@@ -291,6 +307,17 @@ function EditPatientForm({
           {Object.entries(LANG_LABELS).map(([code, l]) => (
             <option key={code} value={code}>{l.label}</option>
           ))}
+        </select>
+      </div>
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">Check-in channel</label>
+        <select
+          value={form.preferred_channel}
+          onChange={(e) => setForm((f) => ({ ...f, preferred_channel: e.target.value }))}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="whatsapp">WhatsApp messages</option>
+          <option value="voice">Voice call (falls back to WhatsApp)</option>
         </select>
       </div>
       <div className="space-y-1.5">
@@ -487,7 +514,8 @@ function PatientDrawer({
           canEdit={staff?.role !== 'doctor'}
           abhaNumber={patient.abha_number ?? null}
           abhaAddress={patient.abha_address ?? null}
-          onAbhaChanged={(abha_number, abha_address) => onUpdated({ ...patient, abha_number, abha_address })}
+          abhaVerified={!!patient.abha_verified_by_abdm}
+          onAbhaChanged={(abha_number, abha_address, abha_verified_by_abdm) => onUpdated({ ...patient, abha_number, abha_address, abha_verified_by_abdm })}
         />
 
         <Separator />

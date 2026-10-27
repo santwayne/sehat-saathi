@@ -4,7 +4,7 @@ const {
   sendTemplateWithTextFallback,
 } = require('./whatsapp.service');
 const { processInboundMessage } = require('./conversation.service');
-const { CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN } = require('./i18n');
+const { CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN, VOICE_CHECKIN_LOG_PREFIX } = require('./i18n');
 
 // Family accounts (V2_FEATURE_HANDOVER.md, Section 2). A family member is
 // invited by staff, must reply YES (explicit opt-in), and from then on gets
@@ -167,10 +167,10 @@ async function sendWeeklyDigests() {
       const [conv, flags] = await Promise.all([
         pool.query(
           `SELECT
-             COUNT(*) FILTER (WHERE direction = 'outbound' AND (message_text = ANY($2::text[]) OR message_text LIKE $3)) AS checkins_sent,
+             COUNT(*) FILTER (WHERE direction = 'outbound' AND (message_text = ANY($2::text[]) OR message_text LIKE $3 OR message_text LIKE $4)) AS checkins_sent,
              COUNT(*) FILTER (WHERE direction = 'inbound' AND (sender_type IS NULL OR sender_type = 'patient')) AS replies
            FROM conversations WHERE patient_id = $1 AND created_at >= NOW() - INTERVAL '7 days'`,
-          [m.patient_id, CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN]
+          [m.patient_id, CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN, `${VOICE_CHECKIN_LOG_PREFIX}%`]
         ),
         pool.query(
           `SELECT

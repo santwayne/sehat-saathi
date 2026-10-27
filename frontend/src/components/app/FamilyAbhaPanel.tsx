@@ -28,19 +28,23 @@ export function FamilyAbhaPanel({
   canEdit,
   abhaNumber,
   abhaAddress,
+  abhaVerified,
   onAbhaChanged,
 }: {
   patientId: string;
   canEdit: boolean;
   abhaNumber: string | null;
   abhaAddress: string | null;
-  onAbhaChanged: (abhaNumber: string | null, abhaAddress: string | null) => void;
+  abhaVerified: boolean;
+  onAbhaChanged: (abhaNumber: string | null, abhaAddress: string | null, verified: boolean) => void;
 }) {
   const [members, setMembers] = useState<FamilyMember[] | null>(null);
   const [form, setForm] = useState({ name: '', phone: '', relationship: '' });
   const [busy, setBusy] = useState(false);
   const [abha, setAbha] = useState({ number: '', address: '', consent: false });
   const [abhaBusy, setAbhaBusy] = useState(false);
+  const [abdmConfigured, setAbdmConfigured] = useState(false);
+  const [abdm, setAbdm] = useState({ aadhaar: '', otp: '', mobile: '', consent: false, otpSent: false });
 
   const load = useCallback(() => {
     api
@@ -48,6 +52,13 @@ export function FamilyAbhaPanel({
       .then((r) => setMembers(r.data))
       .catch(() => setMembers([]));
   }, [patientId]);
+
+  useEffect(() => {
+    api
+      .get<{ configured: boolean }>('/api/patients/abdm-status')
+      .then((r) => setAbdmConfigured(r.configured))
+      .catch(() => setAbdmConfigured(false));
+  }, []);
 
   useEffect(() => {
     setMembers(null);
@@ -83,11 +94,11 @@ export function FamilyAbhaPanel({
     e.preventDefault();
     setAbhaBusy(true);
     try {
-      const res = await api.post<{ data: { abha_number: string | null; abha_address: string | null } }>(
+      const res = await api.post<{ data: { abha_number: string | null; abha_address: string | null; abha_verified_by_abdm: boolean } }>(
         `/api/patients/${patientId}/abha`,
         { abha_number: abha.number || undefined, abha_address: abha.address || undefined, patient_consented: abha.consent },
       );
-      onAbhaChanged(res.data.abha_number, res.data.abha_address);
+      onAbhaChanged(res.data.abha_number, res.data.abha_address, res.data.abha_verified_by_abdm);
       setAbha({ number: '', address: '', consent: false });
       toast.success('ABHA details recorded');
     } catch (err) {
@@ -100,9 +111,42 @@ export function FamilyAbhaPanel({
   async function unlinkAbha() {
     try {
       await api.delete(`/api/patients/${patientId}/abha`);
-      onAbhaChanged(null, null);
+      onAbhaChanged(null, null, false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not unlink ABHA');
+    }
+  }
+
+  async function sendAbdmOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setAbhaBusy(true);
+    try {
+      await api.post(`/api/patients/${patientId}/abha/link-init`, { aadhaar: abdm.aadhaar.replace(/\D/g, ''), patient_consented: abdm.consent });
+      // The Aadhaar number is not kept: clear it as soon as ABDM has the OTP request.
+      setAbdm((a) => ({ ...a, aadhaar: '', otpSent: true }));
+      toast.success('OTP sent to the mobile linked with Aadhaar');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not start ABHA creation');
+    } finally {
+      setAbhaBusy(false);
+    }
+  }
+
+  async function verifyAbdmOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setAbhaBusy(true);
+    try {
+      const res = await api.post<{ data: { abha_number: string; abha_address: string | null; abha_verified_by_abdm: boolean } }>(
+        `/api/patients/${patientId}/abha/verify-otp`,
+        { otp: abdm.otp, mobile: abdm.mobile || undefined },
+      );
+      onAbhaChanged(res.data.abha_number, res.data.abha_address, res.data.abha_verified_by_abdm);
+      setAbdm({ aadhaar: '', otp: '', mobile: '', consent: false, otpSent: false });
+      toast.success('ABHA created and linked');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not verify OTP');
+    } finally {
+      setAbhaBusy(false);
     }
   }
 
@@ -169,13 +213,49 @@ export function FamilyAbhaPanel({
             <div>
               {abhaNumber && <p className="font-medium">{abhaNumber}</p>}
               {abhaAddress && <p className="text-muted-foreground">{abhaAddress}</p>}
-              <p className="mt-1 text-xs text-muted-foreground">Recorded by staff — not yet verified with ABDM.</p>
+              <p className="mt-1 text-xs text-muted-foreground">{abhaVerified ? 'Created/verified through ABDM.' : 'Recorded by staff — not verified with ABDM.'}</p>
             </div>
             {canEdit && (
               <Button variant="outline" size="sm" onClick={() => void unlinkAbha()}>
                 Unlink
               </Button>
             )}
+          </div>
+        ) : canEdit && abdmConfigured ? (
+          <div className="space-y-4">
+            {!abdm.otpSent ? (
+              <form onSubmit={sendAbdmOtp} className="space-y-2">
+                <p className="text-xs text-muted-foreground">Create an ABHA through ABDM. The Aadhaar number goes straight to ABDM and is never stored.</p>
+                <Input required inputMode="numeric" maxLength={12} placeholder="Aadhaar number (12 digits)" value={abdm.aadhaar} onChange={(e) => setAbdm({ ...abdm, aadhaar: e.target.value })} />
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border p-3">
+                  <input type="checkbox" checked={abdm.consent} onChange={(e) => setAbdm({ ...abdm, consent: e.target.checked })} className="h-4 w-4 accent-primary" />
+                  <span className="text-sm">Patient consents to creating/linking their ABHA</span>
+                </label>
+                <Button type="submit" size="sm" disabled={abhaBusy || !abdm.consent || abdm.aadhaar.replace(/\D/g, '').length !== 12} className="w-full">
+                  {abhaBusy ? 'Sending OTP…' : 'Send OTP'}
+                </Button>
+              </form>
+            ) : (
+              <form onSubmit={verifyAbdmOtp} className="space-y-2">
+                <Input required inputMode="numeric" maxLength={6} placeholder="6-digit OTP" value={abdm.otp} onChange={(e) => setAbdm({ ...abdm, otp: e.target.value })} />
+                <Input inputMode="tel" placeholder="Mobile number (optional)" value={abdm.mobile} onChange={(e) => setAbdm({ ...abdm, mobile: e.target.value })} />
+                <Button type="submit" size="sm" disabled={abhaBusy || abdm.otp.length !== 6} className="w-full">
+                  {abhaBusy ? 'Verifying…' : 'Verify & create ABHA'}
+                </Button>
+              </form>
+            )}
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer">Or record an existing ABHA manually</summary>
+              <form onSubmit={saveAbha} className="mt-2 space-y-2">
+                <Input placeholder="ABHA number (14 digits)" value={abha.number} onChange={(e) => setAbha({ ...abha, number: e.target.value })} />
+                <Input placeholder="ABHA address (name@abdm)" value={abha.address} onChange={(e) => setAbha({ ...abha, address: e.target.value })} />
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border p-3">
+                  <input type="checkbox" checked={abha.consent} onChange={(e) => setAbha({ ...abha, consent: e.target.checked })} className="h-4 w-4 accent-primary" />
+                  <span className="text-sm">Patient consents to linking their ABHA</span>
+                </label>
+                <Button type="submit" size="sm" disabled={abhaBusy || !abha.consent || (!abha.number && !abha.address)} className="w-full">Record ABHA</Button>
+              </form>
+            </details>
           </div>
         ) : canEdit ? (
           <form onSubmit={saveAbha} className="space-y-2">
