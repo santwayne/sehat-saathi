@@ -13,6 +13,10 @@ const doctorRoutes = require('./routes/doctors.routes');
 const clinicRoutes = require('./routes/clinics.routes');
 const pilotRequestRoutes = require('./routes/pilot-requests.routes');
 const cronRoutes = require('./routes/cron.routes');
+const bedRoutes = require('./routes/beds.routes');
+const pharmacyRoutes = require('./routes/pharmacy.routes');
+const analyticsRoutes = require('./routes/analytics.routes');
+const voiceRoutes = require('./routes/voice.routes');
 
 const app = express();
 app.use(cors());
@@ -34,6 +38,11 @@ app.use('/api/staff', staffRoutes);
 app.use('/api/doctors', doctorRoutes);
 app.use('/api/clinics', clinicRoutes);
 app.use('/api/pilot-requests', pilotRequestRoutes);
+app.use('/api/beds', bedRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/voice', voiceRoutes);
+// /api/pharmacy-partners and /api/refill-orders
+app.use('/api', pharmacyRoutes);
 // Cron-triggered endpoints (Vercel Cron hits these — see vercel.json). On AWS,
 // server.js's setInterval calls do the same work directly instead.
 app.use('/api/cron', cronRoutes);

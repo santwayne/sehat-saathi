@@ -2,6 +2,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { pool } = require('../db');
 const { validateLLMOutput, isUrgentKeywordPresent } = require('./safety.service');
 const { createEscalationFlag } = require('./escalation.service');
+const { t, languageName } = require('./i18n');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -30,11 +31,11 @@ OUTPUT SCHEMA (JSON):
 /**
  * Logs a conversation turn to the audit trail (Section 6.3 requirement).
  */
-async function logConversation(patientId, direction, text, intentType) {
+async function logConversation(patientId, direction, text, intentType, senderType, channel = 'whatsapp') {
   const { rows } = await pool.query(
-    `INSERT INTO conversations (patient_id, channel, direction, message_text, intent_type)
-     VALUES ($1, 'whatsapp', $2, $3, $4) RETURNING id`,
-    [patientId, direction, text, intentType || null]
+    `INSERT INTO conversations (patient_id, channel, direction, message_text, intent_type, sender_type)
+     VALUES ($1, $6, $2, $3, $4, $5) RETURNING id`,
+    [patientId, direction, text, intentType || null, senderType || null, channel]
   );
   return rows[0].id;
 }
@@ -43,8 +44,13 @@ async function logConversation(patientId, direction, text, intentType) {
  * Handles inbound patient text messages.
  * @param {string} patientId - UUID of the patient (NOT their phone number)
  * @param {string} messageText
+ * @param {{senderType?: 'patient'|'family'}} [options] - 'family' for a message
+ *   from an opted-in family member asking on the patient's behalf. Same
+ *   prescription-scoped engine and safety rules, but never counted as a
+ *   check-in response / missed-dose signal (only the patient's own replies are).
  */
-async function processInboundMessage(patientId, messageText) {
+async function processInboundMessage(patientId, messageText, { senderType = 'patient', channel = 'whatsapp' } = {}) {
+  const isFamily = senderType === 'family';
   // 1. Fetch patient details and active prescription
   const patientQuery = `
     SELECT
@@ -69,7 +75,7 @@ async function processInboundMessage(patientId, messageText) {
 
   // 2. Check for explicit urgent symptom keywords first (code-level check)
   if (isUrgentKeywordPresent(messageText)) {
-    const conversationId = await logConversation(patient.id, 'inbound', messageText, 'symptom_report');
+    const conversationId = await logConversation(patient.id, 'inbound', messageText, 'symptom_report', senderType, channel);
 
     const flagId = await createEscalationFlag({
       patientId: patient.id,
@@ -80,24 +86,21 @@ async function processInboundMessage(patientId, messageText) {
       reason: `Urgent keyword detected in message: "${messageText}"`
     });
 
-    const replyText = patient.language_pref === 'pa'
-      ? 'ਤੁਹਾਡਾ ਸੁਨੇਹਾ ਕਲਿਨਿਕ ਦੀ ਟੀਮ ਨੂੰ ਭੇਜ ਦਿੱਤਾ ਗਿਆ ਹੈ। ਜੇਕਰ ਇਹ ਇਮਰਜੈਂਸੀ ਹੈ, ਤਾਂ ਕਿਰਪਾ ਕਰਕੇ ਤੁਰੰਤ ਕਲਿਨਿਕ ਨਾਲ ਸੰਪਰਕ ਕਰੋ।'
-      : patient.language_pref === 'hi'
-      ? 'आपका संदेश क्लिनिक टीम को भेज दिया गया है। यदि यह आपातकालीन स्थिति है, तो कृपया तुरंत क्लिनिक से संपर्क करें।'
-      : 'Your message has been escalated to the clinic team. If this is an emergency, please contact the clinic immediately.';
+    const replyText = t('urgent', patient.language_pref);
 
-    await logConversation(patient.id, 'outbound', replyText, 'symptom_report');
+    await logConversation(patient.id, 'outbound', replyText, 'symptom_report', senderType, channel);
 
     return { replyText, flagged: true, flagId };
   }
 
-  const inboundConversationId = await logConversation(patient.id, 'inbound', messageText, 'other');
+  const inboundConversationId = await logConversation(patient.id, 'inbound', messageText, 'other', senderType, channel);
 
   // 3. Call Claude with patient's prescription scope
   const promptContent = `
-Patient Language Preference: ${patient.language_pref}
+Patient Language Preference: ${languageName(patient.language_pref)}
 Verified Prescription Context: ${JSON.stringify(patient.structured_json || {})}
-Patient Message: "${messageText}"
+Message Sender: ${isFamily ? "a family member of the patient, asking on the patient's behalf" : 'the patient'}
+Message: "${messageText}"
   `;
 
   const response = await anthropic.messages.create({
@@ -119,6 +122,11 @@ Patient Message: "${messageText}"
     };
   }
 
+  // A family member's reply is never a check-in response.
+  if (isFamily && parsedResponse.intent === 'checkin_response') {
+    parsedResponse.intent = 'question';
+  }
+
   // 4. Validate output against safety rules (banned phrase check)
   const safetyCheck = validateLLMOutput(parsedResponse.reply_text);
   if (!safetyCheck.safe || !parsedResponse.can_answer) {
@@ -134,23 +142,20 @@ Patient Message: "${messageText}"
       reason: safetyCheck.reason || 'Query outside prescription scope'
     });
 
-    const fallbackReply = patient.language_pref === 'pa'
-      ? 'ਮੈਂ ਇਹ ਜਾਣਕਾਰੀ ਤੁਹਾਡੇ ਕਲਿਨਿਕ ਦੇ ਡਾਕਟਰ ਨਾਲ ਸਾਂਝੀ ਕਰ ਦਿੱਤੀ ਹੈ। ਉਹ ਜਲਦੀ ਹੀ ਤੁਹਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰਨਗੇ।'
-      : patient.language_pref === 'hi'
-      ? 'मैंने यह प्रश्न आपके क्लिनिक डॉक्टर को भेज दिया है। वे जल्द ही आपसे संपर्क करेंगे।'
-      : 'I have forwarded this question to your clinic doctor. They will respond to you shortly.';
+    const fallbackReply = t('forwarded', patient.language_pref);
 
-    await logConversation(patient.id, 'outbound', fallbackReply, flagType);
+    await logConversation(patient.id, 'outbound', fallbackReply, flagType, senderType, channel);
 
     return { replyText: fallbackReply, flagged: true };
   }
 
   // 5. Check missed-dose reports to trigger escalation if repeated
-  if (parsedResponse.detected_missed_dose) {
+  if (parsedResponse.detected_missed_dose && !isFamily) {
     // Check if a previous check-in response was also a missed dose
     const recentMissedDoses = await pool.query(
       `SELECT id FROM conversations
        WHERE patient_id = $1 AND intent_type = 'checkin_response'
+         AND (sender_type IS NULL OR sender_type = 'patient')
        ORDER BY created_at DESC LIMIT 2`,
       [patient.id]
     );
@@ -167,7 +172,7 @@ Patient Message: "${messageText}"
     }
   }
 
-  await logConversation(patient.id, 'outbound', parsedResponse.reply_text, parsedResponse.intent);
+  await logConversation(patient.id, 'outbound', parsedResponse.reply_text, parsedResponse.intent, senderType, channel);
 
   return { replyText: parsedResponse.reply_text, flagged: false };
 }

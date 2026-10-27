@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Trash2, UserPlus, Stethoscope } from 'lucide-react';
+import { BedDouble, Trash2, UserPlus, Stethoscope } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
+import { BedQrSheet } from '@/components/app/BedQrSheet';
 import { ErrorState, LoadingState } from '@/components/app/states';
 import { useAuth } from '@/context/AuthContext';
 import { api, API_BASE } from '@/lib/api';
@@ -341,6 +342,7 @@ function DeleteDoctorButton({ doctor, onDeleted }: { doctor: DoctorRow; onDelete
 }
 
 export default function Settings() {
+  const [bedsOpen, setBedsOpen] = useState(false);
   const { staff } = useAuth();
   const [staffList, setStaffList] = useState<StaffRow[] | null>(null);
   const [doctors, setDoctors] = useState<DoctorRow[] | null>(null);
@@ -369,6 +371,7 @@ export default function Settings() {
     <AppShell title="Settings" description="Your profile, access scope and system connection.">
       {staff?.role === 'admin' && (
         <>
+          <BedQrSheet clinicId={staff.clinic_id ?? ''} clinicName="Your hospital" open={bedsOpen} onOpenChange={setBedsOpen} />
           <AddStaffSheet
             open={addStaffOpen}
             onOpenChange={setAddStaffOpen}
@@ -421,6 +424,19 @@ export default function Settings() {
               <Field label="Interface language" value="English" />
             </dl>
           </section>
+
+          {staff?.role === 'admin' && (
+            <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-6 lg:col-span-2">
+              <div>
+                <h2 className="font-display text-lg font-semibold text-foreground">Bed QR codes</h2>
+                <p className="text-sm text-muted-foreground">Print a QR for every bed so patients can connect on WhatsApp themselves.</p>
+              </div>
+              <Button size="sm" onClick={() => setBedsOpen(true)}>
+                <BedDouble className="mr-1.5 size-3.5" />
+                Manage beds
+              </Button>
+            </section>
+          )}
 
           {staff?.role === 'admin' && (
             <section className="rounded-xl border border-border bg-card p-6 lg:col-span-2">

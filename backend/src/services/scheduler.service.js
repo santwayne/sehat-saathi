@@ -2,6 +2,7 @@ const { Queue, Worker } = require('bullmq');
 const Redis = require('ioredis');
 const { pool } = require('../db');
 const { sendWhatsAppTemplate } = require('./whatsapp.service');
+const voice = require('./voice.service');
 
 const connection = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
 
@@ -18,7 +19,7 @@ const checkinWorker = new Worker(
 
     // Verify patient hasn't activated the kill switch (Section 6.3)
     const patientCheck = await pool.query(
-      'SELECT kill_switch_active, consent_given FROM patients WHERE id = $1',
+      'SELECT kill_switch_active, consent_given, preferred_channel FROM patients WHERE id = $1',
       [patientId]
     );
 
@@ -26,6 +27,21 @@ const checkinWorker = new Worker(
     if (!patient || patient.kill_switch_active || !patient.consent_given) {
       console.log(`Skipping check-in for patient ${patientId}: Kill switch active or consent revoked.`);
       return;
+    }
+
+    // Voice-preferring patients get a call when Twilio is configured; any
+    // failure falls through to the WhatsApp template so the check-in isn't lost.
+    if (patient.preferred_channel === 'voice' && voice.isConfigured()) {
+      try {
+        await voice.placeCheckinCall({ id: patientId, phone, language_pref: languagePref });
+        await pool.query(
+          `UPDATE checkin_schedules SET next_checkin_at = NOW() + (frequency_days || ' days')::INTERVAL WHERE id = $1`,
+          [scheduleId]
+        );
+        return;
+      } catch (callErr) {
+        console.error(`Voice check-in call failed for patient ${patientId}, using WhatsApp:`, callErr.message);
+      }
     }
 
     // WhatsApp requires an approved template for all business-initiated messages

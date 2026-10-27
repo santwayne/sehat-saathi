@@ -5,6 +5,8 @@
 const app = require('./app');
 const { scanAndScheduleDueCheckins } = require('./services/scheduler.service');
 const { reassignStaleFlags } = require('./services/escalation.service');
+const { sendWeeklyDigests } = require('./services/family.service');
+const { sendDueRefillReminders } = require('./services/refill.service');
 
 // Run the check-in scanner every 15 minutes
 setInterval(() => {
@@ -15,6 +17,13 @@ setInterval(() => {
 setInterval(() => {
   reassignStaleFlags();
 }, 30 * 60 * 1000);
+
+// Family digests (last_digest_at keeps it to once per ~week per member) and
+// refill reminders (one per prescription) are both safe to scan often.
+setInterval(() => {
+  sendWeeklyDigests().catch((err) => console.error('Family digest scan failed:', err));
+  sendDueRefillReminders().catch((err) => console.error('Refill reminder scan failed:', err));
+}, 6 * 60 * 60 * 1000);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Sehat Saathi API active on port ${PORT}`));

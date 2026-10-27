@@ -9,7 +9,8 @@ const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
 // product's real-world audio (accented, phone-mic, background clinic noise).
 // See Section 6.5 — re-verify with a real sample batch before trusting this
 // in production without the low-confidence confirmation step.
-const LOCALE_MAP = { hi: 'hi-IN', pa: 'pa-IN', en: 'en-IN' };
+const { LANGUAGES } = require('./i18n');
+const LOCALE_MAP = Object.fromEntries(Object.entries(LANGUAGES).map(([code, l]) => [code, l.azure]));
 const ALL_LOCALES = Object.values(LOCALE_MAP);
 
 /**
@@ -19,7 +20,7 @@ const ALL_LOCALES = Object.values(LOCALE_MAP);
  *
  * @param {Buffer} audioBuffer
  * @param {string} mimeType - e.g. 'audio/ogg; codecs=opus' (WhatsApp voice notes)
- * @param {string} [languageHint] - 'hi' | 'pa' | 'en'; when absent, auto-detects across all three
+ * @param {string} [languageHint] - any code in i18n.LANGUAGES; when absent, auto-detects across all of them
  */
 async function transcribeAudio(audioBuffer, mimeType, languageHint) {
   if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {

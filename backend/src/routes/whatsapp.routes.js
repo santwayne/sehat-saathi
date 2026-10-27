@@ -5,7 +5,8 @@ const { downloadWhatsAppMedia, sendWhatsAppMessage, normalizePhone } = require('
 const { processPrescriptionOCR } = require('../services/ocr.service');
 const { processInboundMessage, logConversation } = require('../services/conversation.service');
 const { createEscalationFlag } = require('../services/escalation.service');
-const { handleSelfEnrollment } = require('../services/enrollment.service');
+const { handleSelfEnrollment, extractBedCode, findBedByCode } = require('../services/enrollment.service');
+const { handleFamilyMessage } = require('../services/family.service');
 const { matchDoctor, logMatchAttempt } = require('../services/doctor-match.service');
 const { transcribeAudio } = require('../services/azure-speech.service');
 
@@ -65,7 +66,7 @@ router.post('/webhook', async (req, res) => {
     // one deployment, but very possible now that multiple hospitals share
     // this one webhook.
     const patientRes = await pool.query(
-      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id, consent_given FROM patients WHERE phone = $1 AND clinic_id = $2',
+      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id, consent_given, bed_id FROM patients WHERE phone = $1 AND clinic_id = $2',
       [senderPhone, clinic.id]
     );
     const patient = patientRes.rows[0];
@@ -74,6 +75,11 @@ router.post('/webhook', async (req, res) => {
     // unrecognized sender is no longer silently ignored — they've scanned
     // the hospital's QR and are starting (or continuing) self-enrollment.
     if (!patient) {
+      // Family accounts (V2 spec Section 2): an invited/active family
+      // member's number is checked before treating the sender as a new patient.
+      const handledAsFamily = await handleFamilyMessage({ clinicId: clinic.id, senderPhone, messageType, message });
+      if (handledAsFamily) return;
+
       await handleSelfEnrollment({ clinicId: clinic.id, senderPhone, messageType, message });
       return;
     }
@@ -90,6 +96,20 @@ router.post('/webhook', async (req, res) => {
     if (patient.kill_switch_active) {
       console.log(`Message from ${senderPhone} ignored: kill switch active.`);
       return;
+    }
+
+    // An enrolled patient scanning a (new) bed QR just updates their bed —
+    // it must not reach the conversation engine as a question.
+    if (messageType === 'text') {
+      const bedCode = extractBedCode(message.text?.body);
+      if (bedCode) {
+        const bed = await findBedByCode(clinic.id, bedCode);
+        if (bed) {
+          await pool.query('UPDATE patients SET bed_id = $1 WHERE id = $2', [bed.id, patient.id]);
+          await sendWhatsAppMessage(senderPhone, `Thank you — your bed is now recorded as ${bed.label}.`, clinic.id);
+          return;
+        }
+      }
     }
 
     // Handle incoming image (prescription/lab report photo)
