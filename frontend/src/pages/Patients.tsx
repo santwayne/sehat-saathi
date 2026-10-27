@@ -37,6 +37,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/AuthContext';
 import { useEffectiveClinicId } from '@/context/ClinicContext';
 import { api } from '@/lib/api';
+import { FamilyAbhaPanel } from '@/components/app/FamilyAbhaPanel';
 import { cn } from '@/lib/utils';
 
 interface PatientRow {
@@ -48,6 +49,9 @@ interface PatientRow {
   kill_switch_active: boolean;
   assigned_doctor_id: string | null;
   doctor_name: string | null;
+  bed_label?: string | null;
+  abha_number?: string | null;
+  abha_address?: string | null;
   created_at: string;
 }
 
@@ -68,6 +72,7 @@ interface PatientDetail extends PatientRow {
     id: string;
     direction: string;
     message_text: string;
+    sender_type?: string | null;
     created_at: string;
   }[];
 }
@@ -388,7 +393,7 @@ function PatientDrawer({
           {!editing && (
             <>
               <SheetDescription>
-                {patient.phone} · {patient.doctor_name ?? 'No doctor assigned'}
+                {patient.phone} · {patient.doctor_name ?? 'No doctor assigned'}{patient.bed_label ? ` · Bed ${patient.bed_label}` : ''}
               </SheetDescription>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <LanguageBadge lang={patient.language_pref} />
@@ -472,6 +477,14 @@ function PatientDrawer({
           </AlertDialogContent>
         </AlertDialog>
 
+        <FamilyAbhaPanel
+          patientId={patient.id}
+          canEdit={staff?.role !== 'doctor'}
+          abhaNumber={patient.abha_number ?? null}
+          abhaAddress={patient.abha_address ?? null}
+          onAbhaChanged={(abha_number, abha_address) => onUpdated({ ...patient, abha_number, abha_address })}
+        />
+
         <Separator />
 
         <Tabs defaultValue="prescriptions" className="p-4">
@@ -526,7 +539,7 @@ function PatientDrawer({
               patient.conversations.map((m) => (
                 <div key={m.id} className={cn('rounded-lg border border-border p-3', m.direction === 'inbound' ? 'bg-accent/30' : 'bg-card')}>
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{m.direction}</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{m.direction}{m.sender_type === 'family' ? ' · family' : ''}</p>
                     <p className="text-xs text-muted-foreground">{fmt(m.created_at)}</p>
                   </div>
                   <p className="mt-1 text-sm">{m.message_text}</p>

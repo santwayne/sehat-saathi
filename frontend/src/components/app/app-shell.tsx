@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { Activity, Building2, Flag, LayoutDashboard, LogOut, Pill, Settings, Users } from 'lucide-react';
+import { Activity, Building2, Flag, LayoutDashboard, LogOut, Pill, PillBottle, Settings, Users } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useClinicSwitcher } from '@/context/ClinicContext';
@@ -10,6 +10,7 @@ const NAV = [
   { to: '/app/flags', label: 'Flags', icon: Flag, end: false },
   { to: '/app/prescriptions', label: 'Prescriptions', icon: Pill, end: false },
   { to: '/app/patients', label: 'Patients', icon: Users, end: false },
+  { to: '/app/refills', label: 'Refills', icon: PillBottle, end: false },
   { to: '/app/settings', label: 'Settings', icon: Settings, end: false },
   { to: '/app/clinics', label: 'Hospitals', icon: Building2, end: false },
 ] as const;

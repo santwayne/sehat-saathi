@@ -10,6 +10,7 @@ import Flags from './pages/Flags';
 import Prescriptions from './pages/Prescriptions';
 import Patients from './pages/Patients';
 import Settings from './pages/Settings';
+import Refills from './pages/Refills';
 import SuperAdminClinics from './pages/SuperAdminClinics';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -62,6 +63,14 @@ export default function App() {
             element={
               <AuthGuard>
                 <Patients />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/app/refills"
+            element={
+              <AuthGuard>
+                <Refills />
               </AuthGuard>
             }
           />

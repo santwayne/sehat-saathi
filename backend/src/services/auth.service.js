@@ -59,4 +59,10 @@ function isSuperAdmin(req) {
   return req.user?.role === 'super_admin';
 }
 
-module.exports = { hashPassword, verifyPassword, issueToken, verifyToken, attachUser, requireRole, isSuperAdmin };
+// Super admin may touch any clinic; everyone else only their own (from the token).
+function canAccessClinic(req, clinicId) {
+  if (!req.user) return false;
+  return isSuperAdmin(req) || (!!clinicId && req.user.clinic_id === clinicId);
+}
+
+module.exports = { hashPassword, verifyPassword, issueToken, verifyToken, attachUser, requireRole, isSuperAdmin, canAccessClinic };

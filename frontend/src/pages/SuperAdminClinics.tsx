@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
-import { Building2, Pencil, PlusCircle, Printer, QrCode } from 'lucide-react';
+import { BedDouble, Building2, Pencil, PlusCircle, Printer, QrCode } from 'lucide-react';
+import { BedQrSheet } from '@/components/app/BedQrSheet';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
 import { LoadingState, EmptyState, ErrorState } from '@/components/app/states';
@@ -330,6 +331,7 @@ export default function SuperAdminClinics() {
   const { clinics, loading, refresh, selectedClinicId, setSelectedClinicId } = useClinicSwitcher();
   const [addOpen, setAddOpen] = useState(false);
   const [qrClinic, setQrClinic] = useState<ClinicSummary | null>(null);
+  const [bedClinic, setBedClinic] = useState<ClinicSummary | null>(null);
   const [editClinic, setEditClinic] = useState<ClinicSummary | null>(null);
   const [error] = useState<unknown>(null);
 
@@ -356,6 +358,9 @@ export default function SuperAdminClinics() {
       }
     >
       <AddHospitalSheet open={addOpen} onOpenChange={setAddOpen} onAdded={refresh} />
+      {bedClinic && (
+        <BedQrSheet clinicId={bedClinic.id} clinicName={bedClinic.name} open onOpenChange={(v) => !v && setBedClinic(null)} />
+      )}
       <HospitalQrSheet clinic={qrClinic} open={!!qrClinic} onOpenChange={(v) => !v && setQrClinic(null)} />
       <EditHospitalSheet
         clinic={editClinic}
@@ -416,6 +421,10 @@ export default function SuperAdminClinics() {
                       <Button variant="outline" size="sm" onClick={() => setQrClinic(c)}>
                         <QrCode className="mr-1.5 size-3.5" />
                         QR
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setBedClinic(c)}>
+                        <BedDouble className="mr-1.5 size-3.5" />
+                        Beds
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => toggleSuspend(c)}>
                         {c.status === 'suspended' ? 'Reactivate' : 'Suspend'}

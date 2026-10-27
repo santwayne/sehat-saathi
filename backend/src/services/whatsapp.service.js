@@ -140,6 +140,21 @@ async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyPar
 }
 
 /**
+ * Business-initiated messages (family invites, digests, refill reminders)
+ * normally need an approved template, but a plain text works when the
+ * recipient has messaged us in the last 24h. Try the template first; if Meta
+ * rejects it (not yet approved / outside window), fall back to plain text so
+ * the message still goes out wherever it legally can. Throws only if both fail.
+ */
+async function sendTemplateWithTextFallback(toPhone, templateName, languageCode, bodyParams, fallbackText, clinicId) {
+  try {
+    return await sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyParams, clinicId);
+  } catch (templateErr) {
+    return sendWhatsAppMessage(toPhone, fallbackText, clinicId);
+  }
+}
+
+/**
  * Download incoming media (e.g. prescription image, voice note) from WhatsApp
  * media URL. `clinicId` picks whose access token to use — media belongs to
  * the WABA number it was received on, not necessarily the global default.
@@ -170,5 +185,6 @@ module.exports = {
   resolveClinicCredentials,
   sendWhatsAppMessage,
   sendWhatsAppTemplate,
+  sendTemplateWithTextFallback,
   downloadWhatsAppMedia,
 };

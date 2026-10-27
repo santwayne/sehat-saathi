@@ -15,8 +15,27 @@ const { createEscalationFlag } = require('./escalation.service');
 const AFFIRMATIVE = /^(yes|y|yeah|yup|haan|ha+n?|han+ji|ji( haan)?|ok(ay)?|sure|theek( hai)?|thik( hai)?)\b/i;
 const NEGATIVE = /^(no|nahi+n?|na|nope|nah)\b/i;
 
+// Per-bed QR codes: each bed's QR opens WhatsApp with this code prefilled as
+// the first message (e.g. "BED-K7M2QX"), so the patient is tied to their bed
+// before they've typed anything. Alphabet skips 0/O/1/I to survive misreads.
+const BED_CODE_RE = /\bBED-([A-HJ-NP-Z2-9]{6})\b/i;
+
+function extractBedCode(text) {
+  const m = BED_CODE_RE.exec(text || '');
+  return m ? `BED-${m[1].toUpperCase()}` : null;
+}
+
+async function findBedByCode(clinicId, code) {
+  const { rows } = await pool.query(
+    'SELECT id, label, ward FROM beds WHERE clinic_id = $1 AND code = $2 AND active = true',
+    [clinicId, code]
+  );
+  return rows[0] || null;
+}
+
 const MESSAGES = {
   welcome: (hospitalName) => `Welcome to ${hospitalName} on Sehat Saathi. What's your name?`,
+  welcomeBed: (hospitalName, bedLabel) => `Welcome to ${hospitalName} on Sehat Saathi (${bedLabel}). What's your name?`,
   consent: (name) => `Thanks, ${name}. Reply YES to receive your prescription updates, reminders, and check-ins on this WhatsApp number.`,
   consentUnclear: "Sorry, I didn't quite get that. Please reply YES if you'd like to be enrolled and receive updates on WhatsApp.",
   askDoctorSignal: 'Got it. Please send a photo of the prescription or report you received today, or a short voice note telling us which doctor you saw.',
@@ -39,10 +58,10 @@ async function getPending(clinicId, phone) {
   return rows[0] || null;
 }
 
-async function createPending(clinicId, phone) {
+async function createPending(clinicId, phone, bedId) {
   const { rows } = await pool.query(
-    `INSERT INTO pending_enrollments (clinic_id, phone, stage) VALUES ($1, $2, 'awaiting_name') RETURNING *`,
-    [clinicId, phone]
+    `INSERT INTO pending_enrollments (clinic_id, phone, stage, bed_id) VALUES ($1, $2, 'awaiting_name', $3) RETURNING *`,
+    [clinicId, phone, bedId || null]
   );
   return rows[0];
 }
@@ -94,9 +113,9 @@ async function notify(clinicId, phone, text) {
  */
 async function completeEnrollment({ pending, clinicId, doctorId }) {
   const { rows } = await pool.query(
-    `INSERT INTO patients (clinic_id, name, phone, language_pref, consent_given, assigned_doctor_id)
-     VALUES ($1, $2, $3, $4, true, $5) RETURNING *`,
-    [clinicId, pending.name, pending.phone, pending.language_pref || 'hi', doctorId || null]
+    `INSERT INTO patients (clinic_id, name, phone, language_pref, consent_given, assigned_doctor_id, bed_id)
+     VALUES ($1, $2, $3, $4, true, $5, $6) RETURNING *`,
+    [clinicId, pending.name, pending.phone, pending.language_pref || 'hi', doctorId || null, pending.bed_id || null]
   );
   const patient = rows[0];
 
@@ -268,6 +287,23 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
 
   let pending = await getPending(clinicId, senderPhone);
 
+  // A scanned bed QR arrives as a "BED-XXXXXX" text. Record the bed and never
+  // let that text be mistaken for the patient's name.
+  const bedCode = messageType === 'text' ? extractBedCode(message.text?.body) : null;
+  const bed = bedCode ? await findBedByCode(clinicId, bedCode) : null;
+  if (bed) {
+    if (!pending) {
+      pending = await createPending(clinicId, senderPhone, bed.id);
+      await notify(clinic.id, senderPhone, MESSAGES.welcomeBed(clinic.name, bed.label));
+    } else {
+      await updatePending(pending.id, { bed_id: bed.id });
+      if (pending.stage === 'awaiting_name') {
+        await notify(clinic.id, senderPhone, MESSAGES.welcomeBed(clinic.name, bed.label));
+      }
+    }
+    return;
+  }
+
   if (!pending) {
     pending = await createPending(clinicId, senderPhone);
     await notify(clinic.id, senderPhone, MESSAGES.welcome(clinic.name));
@@ -320,4 +356,4 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
   }
 }
 
-module.exports = { handleSelfEnrollment, completeEnrollment, getClinic };
+module.exports = { handleSelfEnrollment, completeEnrollment, getClinic, extractBedCode, findBedByCode };
