@@ -83,6 +83,11 @@ const LANG_LABELS: Record<string, { label: string; className: string }> = {
   hi: { label: 'Hindi', className: 'bg-amber-50 text-amber-700 border-amber-200' },
   pa: { label: 'Punjabi', className: 'bg-orange-50 text-orange-700 border-orange-200' },
   en: { label: 'English', className: 'bg-sky-50 text-sky-700 border-sky-200' },
+  mr: { label: 'Marathi', className: 'bg-rose-50 text-rose-700 border-rose-200' },
+  gu: { label: 'Gujarati', className: 'bg-lime-50 text-lime-700 border-lime-200' },
+  bn: { label: 'Bengali', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  ta: { label: 'Tamil', className: 'bg-violet-50 text-violet-700 border-violet-200' },
+  te: { label: 'Telugu', className: 'bg-teal-50 text-teal-700 border-teal-200' },
 };
 
 function LanguageBadge({ lang }: { lang: string }) {
@@ -183,9 +188,9 @@ function AddPatientSheet({
               onChange={update('language_pref')}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
-              <option value="hi">Hindi</option>
-              <option value="pa">Punjabi</option>
-              <option value="en">English</option>
+              {Object.entries(LANG_LABELS).map(([code, l]) => (
+                <option key={code} value={code}>{l.label}</option>
+              ))}
             </select>
           </div>
           {doctors.length > 0 && (
@@ -283,9 +288,9 @@ function EditPatientForm({
           onChange={(e) => setForm((f) => ({ ...f, language_pref: e.target.value }))}
           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
-          <option value="hi">Hindi</option>
-          <option value="pa">Punjabi</option>
-          <option value="en">English</option>
+          {Object.entries(LANG_LABELS).map(([code, l]) => (
+            <option key={code} value={code}>{l.label}</option>
+          ))}
         </select>
       </div>
       <div className="space-y-1.5">

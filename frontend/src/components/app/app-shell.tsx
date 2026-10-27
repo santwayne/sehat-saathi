@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { Activity, Building2, Flag, LayoutDashboard, LogOut, Pill, PillBottle, Settings, Users } from 'lucide-react';
+import { Activity, BarChart3, Building2, Flag, LayoutDashboard, LogOut, Pill, PillBottle, Settings, Users } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useClinicSwitcher } from '@/context/ClinicContext';
@@ -11,6 +11,7 @@ const NAV = [
   { to: '/app/prescriptions', label: 'Prescriptions', icon: Pill, end: false },
   { to: '/app/patients', label: 'Patients', icon: Users, end: false },
   { to: '/app/refills', label: 'Refills', icon: PillBottle, end: false },
+  { to: '/app/analytics', label: 'Analytics', icon: BarChart3, end: false },
   { to: '/app/settings', label: 'Settings', icon: Settings, end: false },
   { to: '/app/clinics', label: 'Hospitals', icon: Building2, end: false },
 ] as const;
@@ -72,6 +73,7 @@ export function AppShell({
     if (item.to === '/app/clinics') return staff?.role === 'super_admin';
     // Super admin manages hospitals via /app/clinics, not the single-clinic Settings page.
     if (item.to === '/app/settings') return staff?.role === 'admin';
+    if (item.to === '/app/analytics') return staff?.role !== 'doctor';
     return true;
   });
 

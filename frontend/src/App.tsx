@@ -10,6 +10,7 @@ import Flags from './pages/Flags';
 import Prescriptions from './pages/Prescriptions';
 import Patients from './pages/Patients';
 import Settings from './pages/Settings';
+import Analytics from './pages/Analytics';
 import Refills from './pages/Refills';
 import SuperAdminClinics from './pages/SuperAdminClinics';
 
@@ -63,6 +64,14 @@ export default function App() {
             element={
               <AuthGuard>
                 <Patients />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/app/analytics"
+            element={
+              <AuthGuard>
+                <Analytics />
               </AuthGuard>
             }
           />

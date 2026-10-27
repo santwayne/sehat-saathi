@@ -122,8 +122,10 @@ Apply `src/db/migrations/003_family_beds_abha_refills.sql` to an existing databa
 |---|---|
 | Family member updates | **Built.** Invite -> YES opt-in -> weekly digest + prescription-bounded Q&A. Family replies are never check-in responses; kill switch stays staff-only. |
 | QR code at every hospital bed | **Built.** Each bed has a code; its QR opens WhatsApp with `BED-XXXXXX` prefilled, linking the patient to the bed on enrollment. Printable sheet in Settings / Hospitals. |
-| Pharmacy refill reminders | **Reminder half built.** Parses `duration` ("10 days", "2 weeks", "5 din"), reminds ~3 days before the course ends, one reminder per prescription. WhatsApp *catalog* ordering is **not** built (needs a partner pharmacy + Meta Commerce catalog). |
+| Pharmacy refill reminders | **Built (catalog untested).** Parses `duration` ("10 days", "2 weeks", "5 din"), reminds ~3 days before the course ends, one reminder per prescription. If the partner pharmacy has a catalog id, also sends a WhatsApp `catalog_message` (best effort: needs the catalog connected to the clinic's WABA and the patient's 24h window; not tested against real Meta). Ordering status stays staff-managed. |
 | ABHA / ABDM health record link | **Partial.** Staff can record a consented ABHA number/address. No live ABDM calls (OTP verify, care-context push) — needs HFR/HPR registration and sandbox credentials. |
-| Voice check-in calls, hospital adherence analytics, more Indian languages | Not started. |
+| Hospital analytics on adherence | **Built.** `GET /api/analytics/adherence` + Analytics page: check-in response rate (reply within 24h), daily trend, flags by type, median time to resolve, per-doctor table. Measures engagement and flagged missed doses, not confirmed doses taken. |
+| More Indian languages | **Built (needs native review).** Marathi, Gujarati, Bengali, Tamil, Telugu added (`services/i18n.js`) for check-ins, urgent escalation, forwarded-to-doctor, voice transcription locales, UI. Family/refill/enrollment messages fall back to English for these. |
+| Voice check-in calls | Not started — needs a telephony/voice provider decision (see PR). |
 
 WhatsApp message templates to create and get approved in Meta (business-initiated messages need them; the code falls back to plain text inside the 24h window): `family_invite` (3 params), `family_weekly_digest` (3), `refill_reminder` (3).

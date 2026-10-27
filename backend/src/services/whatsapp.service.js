@@ -140,6 +140,40 @@ async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyPar
 }
 
 /**
+ * Sends a WhatsApp catalog message (interactive "catalog_message"): a button
+ * that opens the catalog connected to the sending WABA number in Meta Commerce
+ * Manager. Interactive messages, like plain text, are only deliverable inside
+ * the recipient's 24h customer-service window — callers treat failure as
+ * non-fatal. The catalog must be connected to the clinic's WABA; a pharmacy's
+ * own catalog elsewhere cannot be opened from this number.
+ */
+async function sendCatalogMessage(toPhone, bodyText, clinicId, thumbnailProductRetailerId) {
+  const { phoneNumberId, accessToken } = await resolveClinicCredentials(clinicId);
+  const parameters = thumbnailProductRetailerId ? { thumbnail_product_retailer_id: thumbnailProductRetailerId } : {};
+  try {
+    const response = await axios.post(
+      apiUrlFor(phoneNumberId),
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: normalizePhone(toPhone),
+        type: 'interactive',
+        interactive: {
+          type: 'catalog_message',
+          body: { text: bodyText },
+          action: { name: 'catalog_message', parameters },
+        },
+      },
+      { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Failed to send WhatsApp catalog message:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
  * Business-initiated messages (family invites, digests, refill reminders)
  * normally need an approved template, but a plain text works when the
  * recipient has messaged us in the last 24h. Try the template first; if Meta
@@ -186,5 +220,6 @@ module.exports = {
   sendWhatsAppMessage,
   sendWhatsAppTemplate,
   sendTemplateWithTextFallback,
+  sendCatalogMessage,
   downloadWhatsAppMedia,
 };

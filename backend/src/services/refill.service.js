@@ -1,12 +1,14 @@
 const { pool } = require('../db');
-const { sendTemplateWithTextFallback } = require('./whatsapp.service');
+const { sendTemplateWithTextFallback, sendCatalogMessage } = require('./whatsapp.service');
 
 // Pharmacy refill reminders (V2_FEATURE_HANDOVER.md, Section 4 — reminder
 // half). Works out when a prescription's medicines run out from the
 // free-text `duration` the OCR read off the paper, and nudges the patient
 // shortly before. Durations that don't parse cleanly are skipped rather than
-// guessed at. WhatsApp *catalog* messages are not built: they need a real
-// partner pharmacy with a Meta Commerce catalog first.
+// guessed at. WhatsApp catalog ordering needs a real partner pharmacy with a
+// Meta Commerce catalog connected to the clinic's WABA. When a partner has a
+// catalog id on file we additionally try an interactive catalog message
+// (best effort — see sendCatalogMessage); ordering itself stays staff-managed.
 
 const REMIND_DAYS_BEFORE = 3;
 const GRACE_DAYS_AFTER = 2; // still remind if the course ended a day or two ago
@@ -83,7 +85,7 @@ async function sendDueRefillReminders() {
     const medNames = due.map((d) => d.name).join(', ');
 
     const pharmRes = await pool.query(
-      'SELECT id, name, whatsapp_business_phone FROM pharmacy_partners WHERE clinic_id = $1 ORDER BY created_at LIMIT 1',
+      'SELECT id, name, whatsapp_business_phone, whatsapp_catalog_id FROM pharmacy_partners WHERE clinic_id = $1 ORDER BY created_at LIMIT 1',
       [row.clinic_id]
     );
     const pharmacy = pharmRes.rows[0] || null;
@@ -112,6 +114,13 @@ async function sendDueRefillReminders() {
       await sendTemplateWithTextFallback(
         row.phone, 'refill_reminder', lang, [row.patient_name, medNames, pharmacyLine.trim() || '-'], text, row.clinic_id
       );
+      // Pharmacy with a catalog on file: also offer the catalog button. Best
+      // effort — it only delivers inside the patient's 24h window, and the
+      // text reminder above has already gone out either way.
+      if (pharmacy?.whatsapp_catalog_id) {
+        const catalogBody = `${pharmacy.name}: ${medNames}`.slice(0, 1000);
+        await sendCatalogMessage(row.phone, catalogBody, row.clinic_id).catch(() => undefined);
+      }
       await pool.query(
         `UPDATE refill_orders SET reminded_at = NOW(), status = CASE WHEN pharmacy_partner_id IS NULL THEN status ELSE 'offered' END WHERE id = $1`,
         [ins.rows[0].id]

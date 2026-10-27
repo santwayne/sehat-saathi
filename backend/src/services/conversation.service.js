@@ -2,6 +2,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { pool } = require('../db');
 const { validateLLMOutput, isUrgentKeywordPresent } = require('./safety.service');
 const { createEscalationFlag } = require('./escalation.service');
+const { t, languageName } = require('./i18n');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -85,11 +86,7 @@ async function processInboundMessage(patientId, messageText, { senderType = 'pat
       reason: `Urgent keyword detected in message: "${messageText}"`
     });
 
-    const replyText = patient.language_pref === 'pa'
-      ? 'ਤੁਹਾਡਾ ਸੁਨੇਹਾ ਕਲਿਨਿਕ ਦੀ ਟੀਮ ਨੂੰ ਭੇਜ ਦਿੱਤਾ ਗਿਆ ਹੈ। ਜੇਕਰ ਇਹ ਇਮਰਜੈਂਸੀ ਹੈ, ਤਾਂ ਕਿਰਪਾ ਕਰਕੇ ਤੁਰੰਤ ਕਲਿਨਿਕ ਨਾਲ ਸੰਪਰਕ ਕਰੋ।'
-      : patient.language_pref === 'hi'
-      ? 'आपका संदेश क्लिनिक टीम को भेज दिया गया है। यदि यह आपातकालीन स्थिति है, तो कृपया तुरंत क्लिनिक से संपर्क करें।'
-      : 'Your message has been escalated to the clinic team. If this is an emergency, please contact the clinic immediately.';
+    const replyText = t('urgent', patient.language_pref);
 
     await logConversation(patient.id, 'outbound', replyText, 'symptom_report', senderType);
 
@@ -100,7 +97,7 @@ async function processInboundMessage(patientId, messageText, { senderType = 'pat
 
   // 3. Call Claude with patient's prescription scope
   const promptContent = `
-Patient Language Preference: ${patient.language_pref}
+Patient Language Preference: ${languageName(patient.language_pref)}
 Verified Prescription Context: ${JSON.stringify(patient.structured_json || {})}
 Message Sender: ${isFamily ? "a family member of the patient, asking on the patient's behalf" : 'the patient'}
 Message: "${messageText}"
@@ -145,11 +142,7 @@ Message: "${messageText}"
       reason: safetyCheck.reason || 'Query outside prescription scope'
     });
 
-    const fallbackReply = patient.language_pref === 'pa'
-      ? 'ਮੈਂ ਇਹ ਜਾਣਕਾਰੀ ਤੁਹਾਡੇ ਕਲਿਨਿਕ ਦੇ ਡਾਕਟਰ ਨਾਲ ਸਾਂਝੀ ਕਰ ਦਿੱਤੀ ਹੈ। ਉਹ ਜਲਦੀ ਹੀ ਤੁਹਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰਨਗੇ।'
-      : patient.language_pref === 'hi'
-      ? 'मैंने यह प्रश्न आपके क्लिनिक डॉक्टर को भेज दिया है। वे जल्द ही आपसे संपर्क करेंगे।'
-      : 'I have forwarded this question to your clinic doctor. They will respond to you shortly.';
+    const fallbackReply = t('forwarded', patient.language_pref);
 
     await logConversation(patient.id, 'outbound', fallbackReply, flagType, senderType);
 

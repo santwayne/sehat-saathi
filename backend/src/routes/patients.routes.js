@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool } = require('../db');
 const { sendWhatsAppTemplate, normalizePhone, isValidPhone } = require('../services/whatsapp.service');
 const { requireRole, canAccessClinic } = require('../services/auth.service');
+const { isSupportedLanguage } = require('../services/i18n');
 const { inviteFamilyMember } = require('../services/family.service');
 
 /**
@@ -144,6 +145,9 @@ router.post('/', async (req, res) => {
   if (consent_given !== true) {
     return res.status(400).json({ error: 'Patient consent must be given before enrollment.' });
   }
+  if (language_pref !== undefined && !isSupportedLanguage(language_pref)) {
+    return res.status(400).json({ error: 'Unsupported language.' });
+  }
 
   // Normalize to digits-only so DB matches WhatsApp sender IDs (e.g. "917087064479")
   const cleanPhone = normalizePhone(phone);
@@ -221,6 +225,7 @@ router.patch('/:id', async (req, res) => {
     values.push(cleanPhone);
   }
   if (language_pref !== undefined) {
+    if (!isSupportedLanguage(language_pref)) return res.status(400).json({ error: 'Unsupported language.' });
     setClauses.push(`language_pref = $${i++}`);
     values.push(language_pref);
   }
