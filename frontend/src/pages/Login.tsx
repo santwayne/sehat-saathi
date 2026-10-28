@@ -33,7 +33,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center">
-          <img src="/brand/logo-full.png" alt="" className="mb-2 w-44 max-w-full object-contain" />
+          <img src="/brand/logo-full.webp" alt="" className="w-56 max-w-full object-contain mix-blend-multiply" />
           <h1 className="sr-only">Sehat Saathi</h1>
           <p className="mt-1 text-sm text-muted-foreground">Staff portal — sign in to continue</p>
         </div>

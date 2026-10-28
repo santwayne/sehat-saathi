@@ -80,16 +80,11 @@ export function AppShell({
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-        <div className="flex items-center gap-2.5 px-5 py-6">
-          <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-border">
-            <img src="/brand/logo-mark.png" alt="" className="size-11 object-contain" />
-          </span>
-          <span className="leading-tight">
-            <span className="block font-display text-base font-semibold text-sidebar-foreground">
-              Sehat Saathi
-            </span>
-            <span className="block text-xs text-muted-foreground">Clinic companion</span>
-          </span>
+        <div className="px-4 pb-4 pt-5">
+          <div className="rounded-2xl bg-white px-2 py-2 shadow-sm ring-1 ring-border">
+            <img src="/brand/logo-full.webp" alt="Sehat Saathi" className="mx-auto w-full max-w-[11rem] object-contain" />
+          </div>
+          <p className="mt-2 text-center text-xs text-muted-foreground">Clinic companion</p>
         </div>
 
         <nav className="flex-1 space-y-1 px-3" aria-label="Main">
