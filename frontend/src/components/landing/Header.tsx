@@ -1,12 +1,10 @@
 import { Link } from 'react-router-dom';
 
-// The logo is used exactly as designed (icon above the wordmark). It is a flat
-// image with a soft shadow on an off-white ground, so mix-blend-multiply lets
-// it sit on the page background without a visible box.
+// The logo is a transparent PNG (icon above the wordmark), so it sits on any background.
 export function BrandLockup({ className = '', logoClass = 'h-14' }: { className?: string; logoClass?: string }) {
   return (
     <div className={`flex flex-col items-start ${className}`}>
-      <img src="/brand/logo-full.png" alt="Sehat Saathi" className={`w-auto mix-blend-multiply ${logoClass}`} />
+      <img src="/brand/logo-full.png" alt="Sehat Saathi" className={`w-auto ${logoClass}`} />
     </div>
   );
 }
