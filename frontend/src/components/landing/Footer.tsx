@@ -5,7 +5,7 @@ export function Footer() {
     <footer className="py-12">
       <div className="section-x flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <BrandLockup logoClass="h-28" />
+          <BrandLockup logoClass="h-20" />
           <p className="mt-1 text-[11px] text-muted-foreground">by Wayne E Solutions</p>
         </div>
         <div className="text-sm text-muted-foreground">
