@@ -82,7 +82,7 @@ export function AppShell({
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
         <div className="px-4 pb-4 pt-5">
           <div className="rounded-2xl bg-white px-2 py-2 shadow-sm ring-1 ring-border">
-            <img src="/brand/logo-full.webp" alt="Sehat Saathi" className="mx-auto w-full max-w-[11rem] object-contain" />
+            <img src="/brand/logo-full.png" alt="Sehat Saathi" className="mx-auto w-full max-w-[7.5rem] object-contain" />
           </div>
           <p className="mt-2 text-center text-xs text-muted-foreground">Clinic companion</p>
         </div>
