@@ -58,8 +58,8 @@ export function Hero() {
           <div className="w-full max-w-[19rem] rounded-[2.25rem] border border-border bg-surface-deep p-2.5 shadow-soft">
             <div className="rounded-[1.85rem] bg-secondary">
               <div className="flex items-center gap-2.5 rounded-t-[1.85rem] bg-primary px-4 py-3 text-primary-foreground">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-foreground/15 text-xs font-semibold">
-                  SS
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white">
+                  <img src="/brand/logo-mark.png" alt="Sehat Saathi" className="size-6 object-contain" />
                 </div>
                 <div className="leading-tight">
                   <p className="text-sm font-medium">Sehat Saathi</p>

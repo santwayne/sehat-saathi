@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { Activity, BarChart3, Building2, Flag, LayoutDashboard, LogOut, Pill, PillBottle, Settings, Users } from 'lucide-react';
+import { BarChart3, Building2, Flag, LayoutDashboard, LogOut, Pill, PillBottle, Settings, Users } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useClinicSwitcher } from '@/context/ClinicContext';
@@ -81,8 +81,8 @@ export function AppShell({
     <div className="flex min-h-screen w-full bg-background">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
         <div className="flex items-center gap-2.5 px-5 py-6">
-          <span className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Activity className="size-5" aria-hidden />
+          <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-border">
+            <img src="/brand/logo-mark.png" alt="" className="size-11 object-contain" />
           </span>
           <span className="leading-tight">
             <span className="block font-display text-base font-semibold text-sidebar-foreground">

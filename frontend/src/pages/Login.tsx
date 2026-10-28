@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
-import { Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,10 +33,8 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center">
-          <span className="flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-            <Activity className="size-6" aria-hidden />
-          </span>
-          <h1 className="mt-4 font-display text-2xl font-semibold text-foreground">Sehat Saathi</h1>
+          <img src="/brand/logo-full.png" alt="" className="mb-2 w-44 max-w-full object-contain" />
+          <h1 className="sr-only">Sehat Saathi</h1>
           <p className="mt-1 text-sm text-muted-foreground">Staff portal — sign in to continue</p>
         </div>
 

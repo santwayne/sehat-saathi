@@ -1,12 +1,9 @@
-import { Activity } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export function BrandLockup({ className = '' }: { className?: string }) {
   return (
     <div className={`flex items-center gap-2.5 ${className}`}>
-      <span className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-        <Activity className="size-5" aria-hidden />
-      </span>
+      <img src="/brand/logo-mark.png" alt="" className="size-12 shrink-0 object-contain" />
       <div className="leading-tight">
         <p className="font-display text-lg text-foreground">Sehat Saathi</p>
         <p className="text-[11px] text-muted-foreground">by Wayne E Solutions</p>
