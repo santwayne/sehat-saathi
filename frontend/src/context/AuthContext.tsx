@@ -7,12 +7,15 @@ export interface Staff {
   name: string;
   role: 'admin' | 'coordinator' | 'nurse' | 'doctor' | 'super_admin';
   phone: string;
+  email?: string | null;
 }
 
 interface AuthContextValue {
   staff: Staff | null;
   login: (phone: string, password: string) => Promise<void>;
   logout: () => void;
+  /** Replace the cached profile (and token, when the server issued a new one). */
+  updateStaff: (next: Staff, token?: string) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -36,7 +39,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStaff(null);
   }
 
-  return <AuthContext.Provider value={{ staff, login, logout }}>{children}</AuthContext.Provider>;
+  function updateStaff(next: Staff, token?: string) {
+    if (token) localStorage.setItem('ss_token', token);
+    localStorage.setItem('ss_staff', JSON.stringify(next));
+    setStaff(next);
+  }
+
+  return <AuthContext.Provider value={{ staff, login, logout, updateStaff }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

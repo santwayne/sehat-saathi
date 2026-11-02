@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { BedDouble, Trash2, UserPlus, Stethoscope } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
+import { BreakGlassPanel } from '@/components/app/BreakGlassPanel';
 import { BedQrSheet } from '@/components/app/BedQrSheet';
 import { ErrorState, LoadingState } from '@/components/app/states';
 import { useAuth } from '@/context/AuthContext';
@@ -424,6 +425,8 @@ export default function Settings() {
               <Field label="Interface language" value="English" />
             </dl>
           </section>
+
+          {staff?.role === 'admin' && <BreakGlassPanel />}
 
           {staff?.role === 'admin' && (
             <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-6 lg:col-span-2">
