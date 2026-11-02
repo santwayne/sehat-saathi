@@ -146,12 +146,10 @@ Super Admin is now a **platform operator**: it runs hospitals, money, keys and e
 | Usage & Profit | Per hospital per month: check-in + other WhatsApp messages, AI-handled inbound messages (estimate), OCR documents, voice calls → cost via editable unit costs; revenue = payments that month; margin | `/api/admin/usage`, `/unit-costs` |
 | Integrations | WhatsApp (platform default), Twilio and ABDM keys — saved AES-256-GCM encrypted, override the env var of the same name, applied without a restart; live "Test" per provider; per-hospital WhatsApp status + WABA ID; WhatsApp template status synced from Meta | `/api/admin/integrations*` |
 | Platform Health | Webhook, check-in queue, OCR, WhatsApp-send, media and voice errors (`platform_events`; ids and error text only, never patient details) | `/api/admin/health*` |
-| Audit Log | Every Super Admin / admin action (logins, hospital changes, billing, keys, password changes) + break-glass requests | `/api/admin/audit`, `/api/admin/break-glass*` |
+| Audit Log | Every Super Admin / admin action (logins, hospital changes, billing, keys, password changes) | `/api/admin/audit` |
 | Settings | Super Admin's own name/phone/email and password | `PATCH /api/auth/me`, `POST /api/auth/change-password` (any role) |
 
-**Removed for Super Admin:** Dashboard, Patients, Prescriptions, Flags, Refills pages and the hospital switcher. On the API side `patientDataGuard` (`services/break-glass.service.js`) sits in front of `/api/patients`, `/api/prescriptions`, `/api/flags` and `/api/refill-orders`: it rejects unauthenticated calls, and rejects Super Admin unless it holds a **break-glass** grant.
-
-**Break-glass:** Super Admin requests access to one hospital with a reason and a window (15 min–24 h) → that hospital's admin approves or denies it in their Settings page → while active, Super Admin gets **GET-only** access to that hospital only, every request is written to `audit_log`, and either side can end it early. There is no patient-viewing screen for Super Admin yet; access under a grant is API-only.
+**Removed for Super Admin:** Dashboard, Patients, Prescriptions, Flags, Refills pages and the hospital switcher. Super Admin **never** has access to patient records — see section 10. (An earlier "break-glass" emergency-access feature was removed.)
 
 ## 9. Regulars integration (retention, Super Admin only)
 
@@ -170,3 +168,18 @@ Apply `src/db/migrations/006_regulars_integration.sql` (idempotent; `schema.sql`
 Events go through `regulars_outbox` and are pushed asynchronously (right away, then every 5 min on the persistent server / daily via `/api/cron/regulars-sync` on Vercel) with exponential backoff up to 10 attempts. Events Regulars rejects are marked failed with the reason (shown per hospital, retryable). Delivered rows have phone/name cleared. Failures show in Platform Health and as an Overview alert; every settings change is audited (keys are never logged or returned).
 
 Turning the kill switch back off does **not** undo the Regulars opt-out — only the business owner can do that in Regulars.
+
+## 10. Patient-records plans (Super Admin never sees patient records)
+
+Apply `src/db/migrations/007_records_plans.sql` (idempotent; `schema.sql` includes it). Existing hospitals stay **with patient records**.
+
+| | With patient records | Without patient records |
+|---|---|---|
+| Patient data stored | Yes | **No.** Inbound WhatsApp for the hospital gets one fixed reply ("contact the hospital directly"); no enrolment, conversation log or document is saved |
+| Hospital staff access to records | Once Super Admin **approves** the hospital (Hospitals → Approve, i.e. status Active). Before that they see "waiting for approval" | None: record pages are hidden and the API refuses |
+| Super Admin access to records | **Never** | **Never** |
+
+- A plan carries `patient_records`; assigning a plan to a hospital sets `clinics.records_mode`. It can also be set on Add/Edit hospital.
+- Moving a hospital that still has stored patient records to "without" is refused (409): Super Admin cannot see or delete those records, so the hospital deals with its own data first.
+- Enforcement is server-side in `services/records-access.service.js` (`patientRecordsGuard` on `/api/patients`, `/api/prescriptions`, `/api/flags`, `/api/refill-orders`, `/api/analytics`); the UI only mirrors it (`records_access` on login and `/api/auth/me`). Bed occupant names, clinic flag/prescription counts and clinic summaries are not shown to Super Admin either.
+- WhatsApp check-ins, document reading and reminders need stored data, so they only run for hospitals **with** patient records.

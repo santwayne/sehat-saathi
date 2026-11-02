@@ -3,6 +3,9 @@ const router = express.Router();
 const { pool } = require('../db');
 const { requireRole, hashPassword } = require('../services/auth.service');
 const { logAudit } = require('../services/audit.service');
+const { setRecordsMode, clearClinicAccessCache, clinicAccessInfo, recordsAccessFor } = require('../services/records-access.service');
+
+const RECORD_MODES = ['with_records', 'without_records'];
 
 /**
  * GET /api/clinics
@@ -14,9 +17,8 @@ router.get('/', requireRole('super_admin'), async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         c.id, c.name, c.address, c.whatsapp_number, c.whatsapp_phone_number_id,
-        c.status, c.created_at,
+        c.status, c.records_mode, c.created_at,
         (SELECT COUNT(*) FROM patients p WHERE p.clinic_id = c.id) AS patient_count,
-        (SELECT COUNT(*) FROM flags f JOIN patients p ON f.patient_id = p.id WHERE p.clinic_id = c.id AND f.status = 'open') AS open_flag_count,
         (SELECT COUNT(*) FROM doctors d WHERE d.clinic_id = c.id) AS doctor_count
       FROM clinics c
       ORDER BY c.created_at DESC;
@@ -41,8 +43,11 @@ router.get('/', requireRole('super_admin'), async (req, res) => {
 router.post('/', requireRole('super_admin'), async (req, res) => {
   const {
     name, address, whatsapp_number, whatsapp_phone_number_id, whatsapp_access_token,
-    admin_name, admin_phone, admin_password,
+    admin_name, admin_phone, admin_password, records_mode = 'with_records',
   } = req.body;
+  if (!RECORD_MODES.includes(records_mode)) {
+    return res.status(400).json({ error: "records_mode must be 'with_records' or 'without_records'." });
+  }
 
   if (!name || !whatsapp_number) {
     return res.status(400).json({ error: 'name and whatsapp_number are required.' });
@@ -56,10 +61,10 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
     await client.query('BEGIN');
 
     const clinicRes = await client.query(
-      `INSERT INTO clinics (name, address, whatsapp_number, whatsapp_phone_number_id, whatsapp_access_token, status)
-       VALUES ($1, $2, $3, $4, $5, 'onboarding')
-       RETURNING id, name, address, whatsapp_number, whatsapp_phone_number_id, status, created_at`,
-      [name, address || null, whatsapp_number, whatsapp_phone_number_id || null, whatsapp_access_token || null]
+      `INSERT INTO clinics (name, address, whatsapp_number, whatsapp_phone_number_id, whatsapp_access_token, status, records_mode)
+       VALUES ($1, $2, $3, $4, $5, 'onboarding', $6)
+       RETURNING id, name, address, whatsapp_number, whatsapp_phone_number_id, status, records_mode, created_at`,
+      [name, address || null, whatsapp_number, whatsapp_phone_number_id || null, whatsapp_access_token || null, records_mode]
     );
     const clinic = clinicRes.rows[0];
 
@@ -76,7 +81,7 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
       targetType: 'clinic',
       targetId: clinic.id,
       clinicId: clinic.id,
-      details: { name, admin_name, admin_phone },
+      details: { name, admin_name, admin_phone, records_mode },
     });
     return res.status(201).json({ success: true, data: { clinic, admin: adminRes.rows[0] } });
   } catch (error) {
@@ -96,6 +101,11 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
  * Read-only clinic info for the Settings page.
  */
 router.get('/:id', async (req, res) => {
+  // Was readable without logging in.
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  if (req.user.role !== 'super_admin' && req.user.clinic_id !== req.params.id) {
+    return res.status(403).json({ error: 'Insufficient permissions.' });
+  }
   try {
     const { rows } = await pool.query(
       'SELECT id, name, address, whatsapp_number, whatsapp_phone_number_id, status, created_at FROM clinics WHERE id = $1',
@@ -113,15 +123,17 @@ router.get('/:id', async (req, res) => {
 
 /**
  * GET /api/clinics/:id/summary
- * Aggregate counts for the clinic-switcher view. Super admin can view any
- * clinic; other staff only their own.
+ * Aggregate counts for a hospital's own staff (never Super Admin).
  */
 router.get('/:id/summary', async (req, res) => {
   const { id } = req.params;
-  const isSuperAdmin = req.user?.role === 'super_admin';
-
-  if (!isSuperAdmin && req.user?.clinic_id !== id) {
+  // Flag / pending-prescription counts describe clinical activity: hospital
+  // staff of this clinic only, and only when records are open to them.
+  if (!req.user || req.user.role === 'super_admin' || req.user.clinic_id !== id) {
     return res.status(403).json({ error: 'Insufficient permissions.' });
+  }
+  if (recordsAccessFor(req.user.role, await clinicAccessInfo(id)) !== 'enabled') {
+    return res.status(403).json({ error: 'Patient records are not available for this hospital.' });
   }
 
   try {
@@ -160,7 +172,20 @@ router.get('/:id/summary', async (req, res) => {
  */
 router.patch('/:id', requireRole('super_admin'), async (req, res) => {
   const { id } = req.params;
-  const { name, address, status, whatsapp_number, whatsapp_phone_number_id, whatsapp_access_token } = req.body;
+  const { name, address, status, whatsapp_number, whatsapp_phone_number_id, whatsapp_access_token, records_mode } = req.body;
+
+  if (records_mode !== undefined) {
+    if (!RECORD_MODES.includes(records_mode)) {
+      return res.status(400).json({ error: "records_mode must be 'with_records' or 'without_records'." });
+    }
+    try {
+      await setRecordsMode(id, records_mode);
+    } catch (error) {
+      if (error.status) return res.status(error.status).json({ error: error.message });
+      console.error('Failed to change records mode:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
 
   const setClauses = [];
   const values = [];
@@ -179,30 +204,33 @@ router.patch('/:id', requireRole('super_admin'), async (req, res) => {
   if (whatsapp_phone_number_id !== undefined) { setClauses.push(`whatsapp_phone_number_id = $${i++}`); values.push(whatsapp_phone_number_id); }
   if (whatsapp_access_token !== undefined) { setClauses.push(`whatsapp_access_token = $${i++}`); values.push(whatsapp_access_token); }
 
-  if (setClauses.length === 0) {
+  if (setClauses.length === 0 && records_mode === undefined) {
     return res.status(400).json({ error: 'No fields provided to update.' });
   }
+  // records_mode alone: already saved above; keep the UPDATE valid.
+  if (setClauses.length === 0) setClauses.push('records_mode = records_mode');
 
   values.push(id);
 
   try {
     const { rows } = await pool.query(
       `UPDATE clinics SET ${setClauses.join(', ')} WHERE id = $${i}
-       RETURNING id, name, address, whatsapp_number, whatsapp_phone_number_id, status, created_at`,
+       RETURNING id, name, address, whatsapp_number, whatsapp_phone_number_id, status, records_mode, created_at`,
       values
     );
+    clearClinicAccessCache(id);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Clinic not found.' });
     }
     // Field names only for credentials — never the token value.
     const changed = Object.keys(req.body).filter((k) =>
-      ['name', 'address', 'status', 'whatsapp_number', 'whatsapp_phone_number_id', 'whatsapp_access_token'].includes(k)
+      ['name', 'address', 'status', 'whatsapp_number', 'whatsapp_phone_number_id', 'whatsapp_access_token', 'records_mode'].includes(k)
     );
-    await logAudit(req, status !== undefined && changed.length === 1 ? `clinic.${status === 'suspended' ? 'suspend' : 'status_change'}` : 'clinic.update', {
+    await logAudit(req, status !== undefined && changed.length === 1 ? `clinic.${status === 'suspended' ? 'suspend' : status === 'active' ? 'activate' : 'status_change'}` : 'clinic.update', {
       targetType: 'clinic',
       targetId: id,
       clinicId: id,
-      details: { fields: changed, ...(status !== undefined ? { status } : {}) },
+      details: { fields: changed, ...(status !== undefined ? { status } : {}), ...(records_mode !== undefined ? { records_mode } : {}) },
     });
     return res.status(200).json({ success: true, data: rows[0] });
   } catch (error) {

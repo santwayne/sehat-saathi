@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { BedDouble, Trash2, UserPlus, Stethoscope } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/app/app-shell';
-import { BreakGlassPanel } from '@/components/app/BreakGlassPanel';
 import { BedQrSheet } from '@/components/app/BedQrSheet';
 import { ErrorState, LoadingState } from '@/components/app/states';
 import { useAuth } from '@/context/AuthContext';
@@ -410,6 +409,18 @@ export default function Settings() {
             <h2 className="font-display text-lg font-semibold text-foreground">Data access</h2>
             <dl className="mt-2">
               <Field
+                label="Patient records"
+                value={
+                  staff?.records_access === 'enabled'
+                    ? 'Included in your plan'
+                    : staff?.records_access === 'awaiting_approval'
+                      ? 'Open once your hospital is approved'
+                      : staff?.records_access === 'not_in_plan'
+                        ? 'Not included in your plan (nothing is stored)'
+                        : '—'
+                }
+              />
+              <Field
                 label="Visibility"
                 value={staff?.role === 'doctor' ? 'Own patients only' : 'Clinic-wide records'}
               />
@@ -425,8 +436,6 @@ export default function Settings() {
               <Field label="Interface language" value="English" />
             </dl>
           </section>
-
-          {staff?.role === 'admin' && <BreakGlassPanel />}
 
           {staff?.role === 'admin' && (
             <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-6 lg:col-span-2">

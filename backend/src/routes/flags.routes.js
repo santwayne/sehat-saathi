@@ -16,7 +16,7 @@ const regulars = require('../services/regulars.service');
  * any signed-in staff member could omit staff_id, or a doctor could pass a
  * different staff_id, to read another clinic's or another doctor's flags).
  */
-router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor'), async (req, res) => {
   const { status = 'open', clinic_id } = req.query;
 
   try {

@@ -77,6 +77,9 @@ export function AppShell({
   const visibleNav = isSuperAdmin
     ? SUPER_ADMIN_NAV
     : CLINIC_NAV.filter((item) => {
+        // No record pages unless the plan includes records and the hospital is approved.
+        const recordsOpen = !staff?.records_access || staff.records_access === 'enabled';
+        if (!recordsOpen && item.to !== '/app' && item.to !== '/app/settings') return false;
         if (item.to === '/app/settings') return staff?.role === 'admin';
         if (item.to === '/app/analytics') return staff?.role !== 'doctor';
         return true;
@@ -143,11 +146,17 @@ export function AppShell({
           <div className="ml-auto flex items-center gap-3">
             {isSuperAdmin ? (
               <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
-                Platform operator · no patient data
+                Platform operator · never sees patient records
               </span>
             ) : (
               <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
-                {staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide'}
+                {staff?.records_access === 'not_in_plan'
+                  ? 'No patient records plan'
+                  : staff?.records_access === 'awaiting_approval'
+                    ? 'Awaiting approval'
+                    : staff?.role === 'doctor'
+                      ? 'Your patients only'
+                      : 'Clinic-wide'}
               </span>
             )}
             <div className="text-right leading-tight">

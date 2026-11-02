@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool } = require('../db');
 const { verifyPassword, issueToken, hashPassword } = require('../services/auth.service');
 const { logAudit } = require('../services/audit.service');
+const { clinicAccessInfo, recordsAccessFor } = require('../services/records-access.service');
 
 /**
  * POST /api/auth/login
@@ -42,7 +43,11 @@ router.post('/login', async (req, res) => {
     return res.status(200).json({
       success: true,
       token,
-      staff: { id: staff.id, clinic_id: staff.clinic_id, name: staff.name, role: staff.role, phone: staff.phone },
+      staff: {
+        id: staff.id, clinic_id: staff.clinic_id, name: staff.name, role: staff.role, phone: staff.phone,
+        // Drives which pages the UI shows; the API enforces it independently.
+        records_access: recordsAccessFor(staff.role, await clinicAccessInfo(staff.clinic_id)),
+      },
     });
   } catch (error) {
     console.error('Login failed:', error);
@@ -66,7 +71,8 @@ router.get('/me', async (req, res) => {
     if (!rows[0]) {
       return res.status(404).json({ error: 'Staff account not found.' });
     }
-    return res.status(200).json({ success: true, data: rows[0] });
+    const records_access = recordsAccessFor(rows[0].role, await clinicAccessInfo(rows[0].clinic_id));
+    return res.status(200).json({ success: true, data: { ...rows[0], records_access } });
   } catch (error) {
     console.error('Failed to fetch current staff profile:', error);
     return res.status(500).json({ error: 'Internal server error' });

@@ -11,16 +11,16 @@ const { CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN, VOICE_CHECKIN_LOG_PR
 // flagged missed doses, not confirmed doses taken.
 
 /**
- * GET /api/analytics/adherence?days=30[&clinic_id=]
- * Clinic-wide for admin/coordinator/nurse; super_admin may pick a clinic or
- * see everything.
+ * GET /api/analytics/adherence?days=30
+ * Clinic-wide for admin/coordinator/nurse of the caller's own hospital.
  */
-router.get('/adherence', requireRole('admin', 'coordinator', 'nurse', 'super_admin'), async (req, res) => {
+router.get('/adherence', requireRole('admin', 'coordinator', 'nurse'), async (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
-  const clinicId = req.user.role === 'super_admin' ? req.query.clinic_id || null : req.user.clinic_id;
-  if (req.user.role !== 'super_admin' && !clinicId) return res.status(403).json({ error: 'Insufficient permissions.' });
+  // Always the caller's own hospital (Super Admin never reaches this route).
+  const clinicId = req.user.clinic_id;
+  if (!clinicId) return res.status(403).json({ error: 'Insufficient permissions.' });
 
-  // $1 = days, $2 = clinic (NULL = all clinics, super_admin only)
+  // $1 = days, $2 = clinic
   const params = [days, clinicId];
   // Separate params for the two check-in queries (the others don't take them).
   const checkinParams = [days, clinicId, CHECKIN_PROMPT_TEXTS, CHECKIN_TEMPLATE_LOG_PATTERN, `${VOICE_CHECKIN_LOG_PREFIX}%`];

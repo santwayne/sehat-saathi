@@ -67,7 +67,7 @@ router.delete('/pharmacy-partners/:id', requireRole('admin', 'super_admin'), asy
 });
 
 /** GET /api/refill-orders?status=flagged — staff-facing refill queue, clinic-scoped. */
-router.get('/refill-orders', requireRole(...ALL_STAFF), async (req, res) => {
+router.get('/refill-orders', requireRole('admin', 'coordinator', 'nurse', 'doctor'), async (req, res) => {
   const { status } = req.query;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
   try {
@@ -99,7 +99,7 @@ router.get('/refill-orders', requireRole(...ALL_STAFF), async (req, res) => {
 });
 
 /** PATCH /api/refill-orders/:id { status } — staff moves an order along the pipeline. */
-router.patch('/refill-orders/:id', requireRole('admin', 'coordinator', 'nurse', 'super_admin'), async (req, res) => {
+router.patch('/refill-orders/:id', requireRole('admin', 'coordinator', 'nurse'), async (req, res) => {
   const { status } = req.body;
   if (!STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
   try {

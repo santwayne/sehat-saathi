@@ -11,7 +11,7 @@ const regulars = require('../services/regulars.service');
  * ?clinic_id=; everyone else is pinned to their own clinic from the token,
  * regardless of what clinic_id (if any) they pass.
  */
-router.get('/pending', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+router.get('/pending', requireRole('admin', 'coordinator', 'nurse', 'doctor'), async (req, res) => {
   const isSuperAdmin = req.user.role === 'super_admin';
   const clinic_id = isSuperAdmin ? req.query.clinic_id : req.user.clinic_id;
 

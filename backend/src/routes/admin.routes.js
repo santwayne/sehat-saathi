@@ -6,6 +6,7 @@ const { logAudit } = require('../services/audit.service');
 const integrations = require('../services/integrations.service');
 const { SOURCES } = require('../services/platform-events.service');
 const regulars = require('../services/regulars.service');
+const { setRecordsMode } = require('../services/records-access.service');
 
 /**
  * Super Admin platform console (/api/admin/*). Everything here is about
@@ -34,9 +35,9 @@ const SUB_PRICE_SQL = 'COALESCE(s.price_override_inr, pl.price_monthly_inr, 0)';
 // ---------------------------------------------------------------------------
 router.get('/overview', async (req, res) => {
   try {
-    const [hospitals, mrr, patients, trialsEnding, overdue, errors24h, noWhatsapp, noSubscription, pendingBreakGlass, revenue30d] =
+    const [hospitals, mrr, patients, trialsEnding, overdue, errors24h, noWhatsapp, noSubscription, awaitingApproval, revenue30d] =
       await Promise.all([
-        pool.query(`SELECT status, COUNT(*)::int AS count FROM clinics GROUP BY status`),
+        pool.query(`SELECT status, records_mode, COUNT(*)::int AS count FROM clinics GROUP BY status, records_mode`),
         pool.query(
           // Trials are counted but contribute nothing to MRR.
           `SELECT COALESCE(SUM(${SUB_PRICE_SQL}) FILTER (WHERE s.status IN ('active', 'past_due')), 0) AS mrr,
@@ -78,11 +79,16 @@ router.get('/overview', async (req, res) => {
            LEFT JOIN clinic_subscriptions s ON s.clinic_id = c.id
            WHERE s.id IS NULL AND c.status <> 'suspended'`
         ),
-        pool.query(`SELECT COUNT(*)::int AS count FROM break_glass_requests WHERE status = 'pending'`),
+        pool.query(`SELECT name FROM clinics WHERE status = 'onboarding' ORDER BY created_at`),
         pool.query(`SELECT COALESCE(SUM(amount_inr), 0) AS total FROM payments WHERE paid_at > NOW() - INTERVAL '30 days'`),
       ]);
 
-    const byStatus = Object.fromEntries(hospitals.rows.map((r) => [r.status, r.count]));
+    const byStatus = {};
+    const byMode = { with_records: 0, without_records: 0 };
+    for (const r of hospitals.rows) {
+      byStatus[r.status] = (byStatus[r.status] || 0) + r.count;
+      byMode[r.records_mode] = (byMode[r.records_mode] || 0) + r.count;
+    }
     const m = mrr.rows[0];
 
     const alerts = [];
@@ -117,8 +123,8 @@ router.get('/overview', async (req, res) => {
         link: '/app/integrations',
       });
     }
-    if (pendingBreakGlass.rows[0].count > 0) {
-      alerts.push({ level: 'info', type: 'break_glass_pending', message: `${pendingBreakGlass.rows[0].count} break-glass request(s) waiting for hospital approval`, link: '/app/audit' });
+    for (const c of awaitingApproval.rows) {
+      alerts.push({ level: 'info', type: 'awaiting_approval', message: `${c.name} is waiting for approval (Onboarding)`, link: '/app/clinics' });
     }
 
     return res.json({
@@ -129,6 +135,8 @@ router.get('/overview', async (req, res) => {
           active: byStatus.active || 0,
           onboarding: byStatus.onboarding || 0,
           suspended: byStatus.suspended || 0,
+          with_records: byMode.with_records,
+          without_records: byMode.without_records,
         },
         mrr_inr: num(m.mrr),
         subscriptions: { active: m.active, trial: m.trial, past_due: m.past_due },
@@ -175,6 +183,7 @@ function planFields(body) {
   }
   if (body.features !== undefined) out.features = body.features || null;
   if (body.active !== undefined) out.active = !!body.active;
+  if (body.patient_records !== undefined) out.patient_records = !!body.patient_records;
   return out;
 }
 
@@ -183,9 +192,9 @@ router.post('/plans', async (req, res) => {
     const f = planFields(req.body);
     if (!f.name) return res.status(400).json({ error: 'Plan name is required.' });
     const { rows } = await pool.query(
-      `INSERT INTO plans (name, price_monthly_inr, patient_limit, features, active)
-       VALUES ($1, $2, $3, $4, COALESCE($5, true)) RETURNING *`,
-      [f.name, f.price_monthly_inr ?? 0, f.patient_limit ?? null, f.features ?? null, f.active]
+      `INSERT INTO plans (name, price_monthly_inr, patient_limit, features, active, patient_records)
+       VALUES ($1, $2, $3, $4, COALESCE($5, true), COALESCE($6, true)) RETURNING *`,
+      [f.name, f.price_monthly_inr ?? 0, f.patient_limit ?? null, f.features ?? null, f.active, f.patient_records]
     );
     await logAudit(req, 'plan.create', { targetType: 'plan', targetId: rows[0].id, details: f });
     return res.status(201).json({ success: true, data: rows[0] });
@@ -221,7 +230,7 @@ router.get('/subscriptions', async (req, res) => {
       `SELECT c.id AS clinic_id, c.name AS clinic_name, c.status AS clinic_status,
               s.id, s.plan_id, pl.name AS plan_name, s.status, s.price_override_inr,
               pl.price_monthly_inr AS plan_price_inr, ${SUB_PRICE_SQL} AS effective_price_inr,
-              s.trial_ends_at, s.started_at, s.cancelled_at,
+              s.trial_ends_at, s.started_at, s.cancelled_at, c.records_mode, pl.patient_records,
               (SELECT COUNT(*)::int FROM patients p WHERE p.clinic_id = c.id) AS patient_count,
               pl.patient_limit
        FROM clinics c
@@ -276,6 +285,14 @@ router.put('/subscriptions/:clinicId', async (req, res) => {
   }
 
   try {
+    // The plan decides whether this hospital keeps patient records.
+    let recordsMode = null;
+    if (plan_id && status !== 'cancelled') {
+      const plan = await pool.query('SELECT patient_records FROM plans WHERE id = $1', [plan_id]);
+      if (!plan.rows[0]) return res.status(400).json({ error: 'Plan not found.' });
+      recordsMode = plan.rows[0].patient_records ? 'with_records' : 'without_records';
+      await setRecordsMode(clinicId, recordsMode);
+    }
     const { rows } = await pool.query(
       `INSERT INTO clinic_subscriptions (clinic_id, plan_id, status, price_override_inr, trial_ends_at, started_at, cancelled_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW(), $6, NOW())
@@ -295,7 +312,7 @@ router.put('/subscriptions/:clinicId', async (req, res) => {
       targetType: 'clinic',
       targetId: clinicId,
       clinicId,
-      details: { plan_id, status, trial_ends_at: trialEnds, price_override_inr: override },
+      details: { plan_id, status, trial_ends_at: trialEnds, price_override_inr: override, records_mode: recordsMode },
     });
     return res.json({ success: true, data: rows[0] });
   } catch (error) {
@@ -869,67 +886,6 @@ router.get('/audit', async (req, res) => {
     return res.json({ success: true, data: rows });
   } catch (error) {
     return fail(res, error, 'Failed to load audit log');
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Break-glass (Super Admin side: request, list, revoke)
-// ---------------------------------------------------------------------------
-const BREAK_GLASS_SELECT = `
-  SELECT b.*, c.name AS clinic_name, r.name AS requested_by_name, d.name AS decided_by_name,
-         (b.status = 'approved' AND b.expires_at > NOW()) AS is_active
-  FROM break_glass_requests b
-  JOIN clinics c ON c.id = b.clinic_id
-  LEFT JOIN staff_users r ON r.id = b.requested_by
-  LEFT JOIN staff_users d ON d.id = b.decided_by`;
-
-router.get('/break-glass', async (req, res) => {
-  try {
-    const { rows } = await pool.query(`${BREAK_GLASS_SELECT} ORDER BY b.created_at DESC LIMIT 200`);
-    return res.json({ success: true, data: rows });
-  } catch (error) {
-    return fail(res, error, 'Failed to list break-glass requests');
-  }
-});
-
-router.post('/break-glass', async (req, res) => {
-  const { clinic_id, reason } = req.body;
-  const duration = Number(req.body.duration_minutes || 60);
-  if (!isUuid(clinic_id)) return res.status(400).json({ error: 'Pick a hospital.' });
-  if (!reason || String(reason).trim().length < 15) {
-    return res.status(400).json({ error: 'Give a clear reason (at least 15 characters) — the hospital admin sees it before approving.' });
-  }
-  if (!Number.isInteger(duration) || duration < 15 || duration > 1440) {
-    return res.status(400).json({ error: 'duration_minutes must be between 15 and 1440.' });
-  }
-  try {
-    const { rows } = await pool.query(
-      `INSERT INTO break_glass_requests (clinic_id, requested_by, reason, duration_minutes)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [clinic_id, req.user.id, String(reason).trim(), duration]
-    );
-    await logAudit(req, 'break_glass.request', { targetType: 'break_glass', targetId: rows[0].id, clinicId: clinic_id, details: { reason, duration_minutes: duration } });
-    const full = await pool.query(`${BREAK_GLASS_SELECT} WHERE b.id = $1`, [rows[0].id]);
-    return res.status(201).json({ success: true, data: full.rows[0] });
-  } catch (error) {
-    return fail(res, error, 'Failed to create break-glass request');
-  }
-});
-
-/** Super Admin can withdraw its own pending request or end an active grant early. */
-router.post('/break-glass/:id/revoke', async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `UPDATE break_glass_requests SET status = 'revoked',
-         expires_at = CASE WHEN status = 'approved' THEN LEAST(expires_at, NOW()) ELSE expires_at END
-       WHERE id = $1 AND status IN ('pending', 'approved') RETURNING id, clinic_id`,
-      [req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'No pending or active request with this id.' });
-    await logAudit(req, 'break_glass.revoke', { targetType: 'break_glass', targetId: req.params.id, clinicId: rows[0].clinic_id });
-    return res.json({ success: true });
-  } catch (error) {
-    return fail(res, error, 'Failed to revoke break-glass request');
   }
 });
 

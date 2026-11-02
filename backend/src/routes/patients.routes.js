@@ -18,7 +18,7 @@ const abdm = require('../services/abdm.service');
  * in doctor could pass a different staff_id and read another doctor's — or
  * with no staff_id/clinic_id at all, every clinic's — patients.
  */
-router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), async (req, res) => {
+router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor'), async (req, res) => {
   const { search, clinic_id } = req.query;
 
   try {
@@ -68,7 +68,7 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_ad
 });
 
 // Must stay above '/:id' or it would be captured as an id.
-router.get('/abdm-status', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_admin'), (req, res) =>
+router.get('/abdm-status', requireRole('admin', 'coordinator', 'nurse', 'doctor'), (req, res) =>
   res.status(200).json({ configured: abdm.isConfigured() }));
 
 /**
@@ -297,8 +297,8 @@ async function loadAccessiblePatient(req, res) {
   return patient;
 }
 
-const STAFF_ROLES = ['admin', 'coordinator', 'nurse', 'doctor', 'super_admin'];
-const WRITE_ROLES = ['admin', 'coordinator', 'nurse', 'super_admin'];
+const STAFF_ROLES = ['admin', 'coordinator', 'nurse', 'doctor'];
+const WRITE_ROLES = ['admin', 'coordinator', 'nurse'];
 
 /**
  * Family accounts (V2 spec Section 2).
@@ -471,10 +471,10 @@ router.delete('/:id/abha', requireRole(...WRITE_ROLES), async (req, res) => {
  * check-in schedules all cascade via existing ON DELETE CASCADE foreign
  * keys (schema.sql) — no orphaned rows left behind. Admin-only: this is
  * destructive and unlike PATCH can't be corrected by editing again, so it
- * gets the same requireRole('admin', 'super_admin') gate as creating staff/doctor
+ * gets the same requireRole('admin') gate as creating staff/doctor
  * accounts, rather than the open access enrollment itself uses.
  */
-router.delete('/:id', requireRole('admin', 'super_admin'), async (req, res) => {
+router.delete('/:id', requireRole('admin'), async (req, res) => {
   const { id } = req.params;
 
   try {
