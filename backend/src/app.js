@@ -18,8 +18,7 @@ const pharmacyRoutes = require('./routes/pharmacy.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const voiceRoutes = require('./routes/voice.routes');
 const adminRoutes = require('./routes/admin.routes');
-const breakGlassRoutes = require('./routes/break-glass.routes');
-const { patientDataGuard } = require('./services/break-glass.service');
+const { patientRecordsGuard } = require('./services/records-access.service');
 const { ensureIntegrationsLoaded } = require('./services/integrations.service');
 
 const app = express();
@@ -37,12 +36,13 @@ app.get('/health', (req, res) => {
 // Mount API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
-// Patient data: authenticated staff only; Super Admin only via an approved,
-// read-only break-glass grant (see services/break-glass.service.js).
-app.use('/api/prescriptions', patientDataGuard, prescriptionRoutes);
-app.use('/api/flags', patientDataGuard, flagRoutes);
-app.use('/api/patients', patientDataGuard, patientRoutes);
-app.use('/api/refill-orders', patientDataGuard);
+// Patient records: Super Admin never; hospital staff only on a "with patient
+// records" plan once their hospital is approved (services/records-access.service.js).
+app.use('/api/prescriptions', patientRecordsGuard, prescriptionRoutes);
+app.use('/api/flags', patientRecordsGuard, flagRoutes);
+app.use('/api/patients', patientRecordsGuard, patientRoutes);
+app.use('/api/refill-orders', patientRecordsGuard);
+app.use('/api/analytics', patientRecordsGuard);
 app.use('/api/staff', staffRoutes);
 app.use('/api/doctors', doctorRoutes);
 app.use('/api/clinics', clinicRoutes);
@@ -51,7 +51,6 @@ app.use('/api/beds', bedRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/break-glass', breakGlassRoutes);
 // /api/pharmacy-partners and /api/refill-orders
 app.use('/api', pharmacyRoutes);
 // Cron-triggered endpoints (Vercel Cron hits these — see vercel.json). On AWS,

@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const router = express.Router();
 const { pool } = require('../db');
 const { requireRole, canAccessClinic } = require('../services/auth.service');
+const { clinicAccessInfo, recordsAccessFor } = require('../services/records-access.service');
 
 // Per-bed QR codes (roadmap "QR code at every hospital bed"). Each bed gets an
 // unguessable code; its QR opens the hospital's WhatsApp with that code
@@ -46,11 +47,15 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'super_admin'), asy
   try {
     const clinic = await resolveClinic(req, res, req.query.clinic_id || req.user.clinic_id);
     if (!clinic) return;
+    // The occupant's name is patient data: only for this hospital's own staff
+    // when patient records are open to them — never for Super Admin.
+    const showOccupant =
+      recordsAccessFor(req.user.role, await clinicAccessInfo(clinic.id)) === 'enabled';
     const { rows } = await pool.query(
       `SELECT b.id, b.label, b.ward, b.code, b.active, b.created_at,
-              (SELECT p.name FROM patients p WHERE p.bed_id = b.id ORDER BY p.created_at DESC LIMIT 1) AS patient_name
+              CASE WHEN $2 THEN (SELECT p.name FROM patients p WHERE p.bed_id = b.id ORDER BY p.created_at DESC LIMIT 1) END AS patient_name
        FROM beds b WHERE b.clinic_id = $1 AND b.active = true ORDER BY b.ward NULLS LAST, b.label`,
-      [clinic.id]
+      [clinic.id, showOccupant]
     );
     return res.status(200).json({
       success: true,

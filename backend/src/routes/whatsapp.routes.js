@@ -46,7 +46,7 @@ router.post('/webhook', async (req, res) => {
     // can have many hospital numbers subscribed to this same webhook URL.
     const incomingPhoneNumberId = value?.metadata?.phone_number_id;
     const clinicRes = await pool.query(
-      'SELECT id, name, status FROM clinics WHERE whatsapp_phone_number_id = $1',
+      'SELECT id, name, status, records_mode FROM clinics WHERE whatsapp_phone_number_id = $1',
       [incomingPhoneNumberId]
     );
     const clinic = clinicRes.rows[0];
@@ -69,6 +69,18 @@ router.post('/webhook', async (req, res) => {
 
     const senderPhone = normalizePhone(message.from);
     const messageType = message.type;
+
+    // "Without patient records" plan: nothing about the sender is stored —
+    // no enrolment, no conversation log, no documents. They get one fixed
+    // reply pointing them to the hospital, and the message is dropped.
+    if (clinic.records_mode === 'without_records') {
+      await sendWhatsAppMessage(
+        senderPhone,
+        `Thank you for messaging ${clinic.name}. This number does not keep patient records or handle medical questions — please contact the hospital directly.\n\n${clinic.name} को संदेश भेजने के लिए धन्यवाद। यह नंबर मरीज़ों का रिकॉर्ड नहीं रखता — कृपया सीधे अस्पताल से संपर्क करें।`,
+        clinic.id
+      ).catch((err) => console.error('No-records auto-reply failed:', err.message));
+      return;
+    }
 
     // Scoped to this clinic (B5 fix): without this, a phone number enrolled
     // at two different clinics would be ambiguous — not possible today with

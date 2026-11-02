@@ -59,16 +59,13 @@ function isSuperAdmin(req) {
   return req.user?.role === 'super_admin';
 }
 
-// Everyone else only their own clinic (from the token). Super admin may touch
-// any clinic for platform resources (beds, pharmacy partners); on patient-data
-// routes patientDataGuard sets req.breakGlassClinicIds and super admin is then
-// limited to the hospitals it holds an approved break-glass grant for.
+// Hospital staff: only their own clinic (from the token). Super Admin may
+// manage any clinic's platform resources (beds, pharmacy partners) — but never
+// patient records: patientRecordsGuard rejects Super Admin on every
+// patient-record route before this is ever consulted.
 function canAccessClinic(req, clinicId) {
   if (!req.user) return false;
-  if (isSuperAdmin(req)) {
-    if (Array.isArray(req.breakGlassClinicIds)) return !!clinicId && req.breakGlassClinicIds.includes(clinicId);
-    return true;
-  }
+  if (isSuperAdmin(req)) return true;
   return !!clinicId && req.user.clinic_id === clinicId;
 }
 
