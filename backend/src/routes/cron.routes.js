@@ -4,6 +4,7 @@ const { sendDueCheckinsDirectly } = require('../services/checkin-direct.service'
 const { reassignStaleFlags } = require('../services/escalation.service');
 const { sendWeeklyDigests } = require('../services/family.service');
 const { sendDueRefillReminders } = require('../services/refill.service');
+const { flushOutbox: flushRegulars } = require('../services/regulars.service');
 
 // Vercel Cron (see vercel.json) calls these on a schedule and sends this header
 // automatically; reject anything else so the endpoints can't be triggered by
@@ -53,6 +54,16 @@ router.get('/refill-reminders', requireCronSecret, async (req, res) => {
   } catch (error) {
     console.error('Cron refill reminders failed:', error);
     return res.status(500).json({ error: 'Refill reminder run failed' });
+  }
+});
+
+router.get('/regulars-sync', requireCronSecret, async (req, res) => {
+  try {
+    const runs = await flushRegulars();
+    return res.status(200).json({ success: true, runs });
+  } catch (error) {
+    console.error('Cron Regulars sync failed:', error);
+    return res.status(500).json({ error: 'Regulars sync failed' });
   }
 });
 

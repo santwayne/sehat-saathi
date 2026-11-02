@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool } = require('../db');
 const { sendWhatsAppTemplate, normalizePhone, isValidPhone } = require('../services/whatsapp.service');
 const { requireRole, canAccessClinic } = require('../services/auth.service');
+const regulars = require('../services/regulars.service');
 const { isSupportedLanguage } = require('../services/i18n');
 const { inviteFamilyMember } = require('../services/family.service');
 const abdm = require('../services/abdm.service');
@@ -195,6 +196,8 @@ router.post('/', async (req, res) => {
         })
         .catch((err) => console.error('Welcome template failed:', err.message));
     }
+    // Retention sync (only if Super Admin has connected this hospital to Regulars).
+    await regulars.onPatientEnrolled(patient);
 
     return res.status(201).json({ success: true, data: patient });
   } catch (error) {
@@ -475,6 +478,14 @@ router.delete('/:id', requireRole('admin', 'super_admin'), async (req, res) => {
   const { id } = req.params;
 
   try {
+    const existing = await pool.query('SELECT id, clinic_id, phone FROM patients WHERE id = $1', [id]);
+    if (existing.rows[0]) {
+      if (!canAccessClinic(req, existing.rows[0].clinic_id)) {
+        return res.status(403).json({ error: 'Insufficient permissions.' });
+      }
+      // Tell Regulars to stop targeting this person before their record goes.
+      await regulars.onPatientOptOut(existing.rows[0]);
+    }
     const { rows } = await pool.query('DELETE FROM patients WHERE id = $1 RETURNING id', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Patient not found.' });

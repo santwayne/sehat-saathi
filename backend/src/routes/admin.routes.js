@@ -5,6 +5,7 @@ const { requireRole } = require('../services/auth.service');
 const { logAudit } = require('../services/audit.service');
 const integrations = require('../services/integrations.service');
 const { SOURCES } = require('../services/platform-events.service');
+const regulars = require('../services/regulars.service');
 
 /**
  * Super Admin platform console (/api/admin/*). Everything here is about
@@ -100,6 +101,21 @@ router.get('/overview', async (req, res) => {
     }
     for (const c of noSubscription.rows) {
       alerts.push({ level: 'warning', type: 'no_plan', message: `${c.name} has no plan or trial assigned`, link: '/app/billing' });
+    }
+    const regularsIssues = await pool.query(
+      `SELECT c.name, r.last_error,
+              (SELECT COUNT(*) FROM regulars_outbox o WHERE o.clinic_id = r.clinic_id AND o.status = 'failed' AND o.phone IS NOT NULL)::int AS failed
+       FROM clinic_regulars r JOIN clinics c ON c.id = r.clinic_id
+       WHERE r.enabled = true AND (r.last_error IS NOT NULL
+         OR EXISTS (SELECT 1 FROM regulars_outbox o WHERE o.clinic_id = r.clinic_id AND o.status = 'failed' AND o.phone IS NOT NULL))`
+    );
+    for (const r of regularsIssues.rows) {
+      alerts.push({
+        level: 'warning',
+        type: 'regulars_sync',
+        message: `${r.name}: Regulars sync problem${r.failed ? ` — ${r.failed} event(s) failed` : ''}${r.last_error ? ` (${r.last_error.slice(0, 120)})` : ''}`,
+        link: '/app/integrations',
+      });
     }
     if (pendingBreakGlass.rows[0].count > 0) {
       alerts.push({ level: 'info', type: 'break_glass_pending', message: `${pendingBreakGlass.rows[0].count} break-glass request(s) waiting for hospital approval`, link: '/app/audit' });
@@ -668,6 +684,103 @@ router.patch('/integrations/clinics/:id', async (req, res) => {
     return res.json({ success: true, data: rows[0] });
   } catch (error) {
     return fail(res, error, 'Failed to update WABA id');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Regulars (per-hospital connection to the retention platform)
+// ---------------------------------------------------------------------------
+router.get('/integrations/regulars', async (req, res) => {
+  try {
+    return res.json({ success: true, data: { base_url_set: !!process.env.REGULARS_BASE_URL, hospitals: await regulars.listStatus() } });
+  } catch (error) {
+    return fail(res, error, 'Failed to load Regulars status');
+  }
+});
+
+/** PUT /api/admin/integrations/regulars/:clinicId  Body: { enabled?, api_key? ('' clears), location_id? } */
+router.put('/integrations/regulars/:clinicId', async (req, res) => {
+  const { enabled, api_key, location_id } = req.body || {};
+  if (api_key && !/^rk_live_[a-f0-9]{20,}$/i.test(String(api_key).trim())) {
+    return res.status(400).json({ error: 'That does not look like a Regulars API key (it starts with rk_live_).' });
+  }
+  if (location_id && !/^[a-z0-9]{10,40}$/i.test(String(location_id))) {
+    return res.status(400).json({ error: 'Invalid Regulars location id.' });
+  }
+  try {
+    const exists = await pool.query('SELECT 1 FROM clinics WHERE id = $1', [req.params.clinicId]);
+    if (!exists.rows[0]) return res.status(404).json({ error: 'Clinic not found.' });
+    const cfg = await regulars.saveConfig(req.params.clinicId, { enabled, apiKey: api_key, locationId: location_id });
+    if (enabled === true && !cfg.api_key_encrypted) {
+      await regulars.saveConfig(req.params.clinicId, { enabled: false });
+      return res.status(400).json({ error: 'Save an API key before turning the connection on.' });
+    }
+    await logAudit(req, 'integration.regulars_update', {
+      targetType: 'clinic',
+      targetId: req.params.clinicId,
+      clinicId: req.params.clinicId,
+      // Never log the key itself.
+      details: {
+        ...(enabled !== undefined ? { enabled: !!enabled } : {}),
+        ...(api_key !== undefined ? { api_key: api_key ? 'replaced' : 'cleared' } : {}),
+        ...(location_id !== undefined ? { location_id: location_id || null } : {}),
+      },
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    return fail(res, error, 'Failed to save Regulars settings');
+  }
+});
+
+router.post('/integrations/regulars/:clinicId/test', async (req, res) => {
+  try {
+    await integrations.loadIntegrationOverrides();
+    const result = await regulars.testConnection(req.params.clinicId);
+    await logAudit(req, 'integration.regulars_test', { targetType: 'clinic', targetId: req.params.clinicId, clinicId: req.params.clinicId, details: { ok: result.ok } });
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return fail(res, error, 'Regulars test failed');
+  }
+});
+
+router.post('/integrations/regulars/:clinicId/backfill', async (req, res) => {
+  try {
+    const result = await regulars.backfill(req.params.clinicId);
+    await logAudit(req, 'integration.regulars_backfill', { targetType: 'clinic', targetId: req.params.clinicId, clinicId: req.params.clinicId, details: result });
+    regulars.flushOutbox({ clinicId: req.params.clinicId }).catch((err) => console.error('Regulars flush after backfill failed:', err.message));
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return fail(res, error, 'Regulars backfill failed');
+  }
+});
+
+router.post('/integrations/regulars/:clinicId/sync', async (req, res) => {
+  try {
+    await integrations.loadIntegrationOverrides();
+    const runs = await regulars.flushOutbox({ clinicId: req.params.clinicId });
+    const total = runs.reduce((t, r) => ({ sent: t.sent + (r.sent || 0), failed: t.failed + (r.failed || 0), retrying: t.retrying + (r.retrying || 0) }), { sent: 0, failed: 0, retrying: 0 });
+    const problem = runs.find((r) => r.error || r.skipped);
+    return res.json({ success: true, data: { ...total, error: problem?.error || problem?.skipped || null } });
+  } catch (error) {
+    return fail(res, error, 'Regulars sync failed');
+  }
+});
+
+router.post('/integrations/regulars/:clinicId/retry-failed', async (req, res) => {
+  try {
+    const result = await regulars.retryFailed(req.params.clinicId);
+    await logAudit(req, 'integration.regulars_retry', { targetType: 'clinic', targetId: req.params.clinicId, clinicId: req.params.clinicId, details: result });
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return fail(res, error, 'Retry failed');
+  }
+});
+
+router.get('/integrations/regulars/:clinicId/failures', async (req, res) => {
+  try {
+    return res.json({ success: true, data: await regulars.recentFailures(req.params.clinicId) });
+  } catch (error) {
+    return fail(res, error, 'Failed to load failures');
   }
 });
 

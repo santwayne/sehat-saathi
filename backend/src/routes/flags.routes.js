@@ -6,6 +6,7 @@ const { completeEnrollment } = require('../services/enrollment.service');
 const { sendWhatsAppMessage } = require('../services/whatsapp.service');
 const { logConversation } = require('../services/conversation.service');
 const { requireRole } = require('../services/auth.service');
+const regulars = require('../services/regulars.service');
 
 /**
  * GET /api/flags
@@ -240,8 +241,10 @@ router.post('/patients/:id/kill-switch', async (req, res) => {
   const { active } = req.body; // boolean
 
   try {
-    const query = `UPDATE patients SET kill_switch_active = $1 WHERE id = $2 RETURNING id, kill_switch_active;`;
+    const query = `UPDATE patients SET kill_switch_active = $1 WHERE id = $2 RETURNING id, kill_switch_active, clinic_id, phone;`;
     const { rows } = await pool.query(query, [active, id]);
+    // Kill switch on = stop all automated contact, including Regulars win-back calls.
+    if (active === true && rows[0]) await regulars.onPatientOptOut(rows[0]);
     return res.status(200).json({
       success: true,
       message: `Kill switch set to ${active}`,

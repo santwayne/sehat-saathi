@@ -46,6 +46,12 @@ const PROVIDERS = {
       { key: 'ABDM_CM_ID', label: 'CM ID (sbx / abdm)', secret: false },
     ],
   },
+  regulars: {
+    label: 'Regulars (retention)',
+    description: 'Wayne E Solutions’ WhatsApp retention platform. Each hospital gets its own Regulars API key below.',
+    required: ['REGULARS_BASE_URL'],
+    fields: [{ key: 'REGULARS_BASE_URL', label: 'Regulars URL', secret: false }],
+  },
 };
 
 const ALL_FIELDS = Object.values(PROVIDERS).flatMap((p) => p.fields);
@@ -182,6 +188,14 @@ async function testProvider(id) {
         }
       );
       return data.accessToken ? { ok: true, message: 'Connected: ABDM session token issued.' } : { ok: false, message: 'ABDM returned no access token.' };
+    }
+    if (id === 'regulars') {
+      const base = (env.REGULARS_BASE_URL || '').replace(/\/$/, '');
+      if (!base) return { ok: false, message: 'Not configured.' };
+      // Without a key the ping must answer 401 — that proves the URL is a Regulars server.
+      const res = await axios.get(`${base}/api/v1/ping`, { timeout: 10_000, validateStatus: () => true });
+      if (res.status === 401) return { ok: true, message: `Reachable: ${base}. Now add each hospital's API key below.` };
+      return { ok: false, message: `Unexpected response HTTP ${res.status} from ${base}/api/v1/ping — is this the Regulars app URL?` };
     }
     return { ok: false, message: 'Unknown provider.' };
   } catch (err) {

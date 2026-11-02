@@ -2,6 +2,7 @@ const { pool } = require('../db');
 const { sendWhatsAppMessage, downloadWhatsAppMedia } = require('./whatsapp.service');
 const { processPrescriptionOCR } = require('./ocr.service');
 const { recordPlatformEvent } = require('./platform-events.service');
+const regulars = require('./regulars.service');
 const { transcribeAudio } = require('./azure-speech.service');
 const { matchDoctor, logMatchAttempt, recordResolution } = require('./doctor-match.service');
 const { createEscalationFlag } = require('./escalation.service');
@@ -133,6 +134,8 @@ async function completeEnrollment({ pending, clinicId, doctorId }) {
   );
 
   await pool.query('DELETE FROM pending_enrollments WHERE id = $1', [pending.id]);
+  // Retention sync (only if Super Admin has connected this hospital to Regulars).
+  await regulars.onPatientEnrolled(patient);
   return patient;
 }
 
