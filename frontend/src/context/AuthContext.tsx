@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 
 export interface Staff {
@@ -8,6 +8,12 @@ export interface Staff {
   role: 'admin' | 'coordinator' | 'nurse' | 'doctor' | 'super_admin';
   phone: string;
   email?: string | null;
+  /**
+   * Whether this user's hospital can open patient records. Set by the server:
+   * 'enabled' | 'not_in_plan' | 'awaiting_approval' | 'suspended' | 'super_admin' | 'no_clinic'.
+   * Only hides pages — the API enforces the same rule.
+   */
+  records_access?: string;
 }
 
 interface AuthContextValue {
@@ -38,6 +44,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('ss_staff');
     setStaff(null);
   }
+
+  // Refresh on load so plan/approval changes show without a re-login.
+  useEffect(() => {
+    if (!localStorage.getItem('ss_token')) return;
+    api
+      .get<{ data: Staff }>('/api/auth/me')
+      .then((r) => {
+        setStaff((prev) => {
+          if (!prev) return prev;
+          const next = { ...prev, ...r.data };
+          localStorage.setItem('ss_staff', JSON.stringify(next));
+          return next;
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   function updateStaff(next: Staff, token?: string) {
     if (token) localStorage.setItem('ss_token', token);

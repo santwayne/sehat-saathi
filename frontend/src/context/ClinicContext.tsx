@@ -9,8 +9,8 @@ export interface ClinicSummary {
   whatsapp_number: string;
   whatsapp_phone_number_id?: string | null;
   status: 'active' | 'suspended' | 'onboarding';
+  records_mode: 'with_records' | 'without_records';
   patient_count: number;
-  open_flag_count: number;
   doctor_count: number;
 }
 

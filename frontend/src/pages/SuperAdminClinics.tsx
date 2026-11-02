@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 
 const STATUS_LABEL: Record<ClinicSummary['status'], string> = {
   active: 'Active',
-  onboarding: 'Onboarding',
+  onboarding: 'Awaiting approval',
   suspended: 'Suspended',
 };
 
@@ -33,7 +33,33 @@ const emptyForm = {
   admin_name: '',
   admin_phone: '',
   admin_password: '',
+  records_mode: 'with_records',
 };
+
+const RECORDS_LABEL: Record<ClinicSummary['records_mode'], string> = {
+  with_records: 'With patient records',
+  without_records: 'Without patient records',
+};
+
+function RecordsModeField({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>Patient records</Label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground shadow-sm"
+      >
+        <option value="with_records">With patient records — hospital admin manages records once approved</option>
+        <option value="without_records">Without patient records — nothing stored, no record pages</option>
+      </select>
+      <p className="text-xs text-muted-foreground">
+        Assigning a plan in Plans &amp; Billing sets this automatically. Super Admin never sees patient records either way.
+      </p>
+    </div>
+  );
+}
 
 function AddHospitalSheet({
   open,
@@ -59,7 +85,7 @@ function AddHospitalSheet({
     setErr(null);
     try {
       await api.post('/api/clinics', form);
-      toast.success(`${form.name} onboarded — status: onboarding`);
+      toast.success(`${form.name} added — approve it on this page when ready`);
       setForm(emptyForm);
       onOpenChange(false);
       onAdded();
@@ -101,6 +127,7 @@ function AddHospitalSheet({
             <Label htmlFor="cWaToken">WhatsApp access token</Label>
             <Input id="cWaToken" type="password" value={form.whatsapp_access_token} onChange={update('whatsapp_access_token')} placeholder="Optional for now" />
           </div>
+          <RecordsModeField id="cRecords" value={form.records_mode} onChange={(v) => setForm((f) => ({ ...f, records_mode: v }))} />
           <div className="border-t border-border pt-4">
             <p className="text-sm font-medium text-foreground">First admin account</p>
             <p className="mt-1 text-xs text-muted-foreground">Created in the same step so the hospital can log in immediately.</p>
@@ -133,6 +160,7 @@ const emptyEditForm = {
   whatsapp_number: '',
   whatsapp_phone_number_id: '',
   whatsapp_access_token: '',
+  records_mode: 'with_records',
 };
 
 // Edit an existing hospital (name/address/WhatsApp credentials) — PATCH
@@ -160,6 +188,7 @@ function EditHospitalSheet({
       whatsapp_number: clinic.whatsapp_number ?? '',
       whatsapp_phone_number_id: clinic.whatsapp_phone_number_id ?? '',
       whatsapp_access_token: '',
+      records_mode: clinic.records_mode ?? 'with_records',
     });
     setErr(null);
   }, [clinic]);
@@ -181,6 +210,7 @@ function EditHospitalSheet({
         whatsapp_number: form.whatsapp_number,
         whatsapp_phone_number_id: form.whatsapp_phone_number_id,
       };
+      if (form.records_mode !== clinic.records_mode) payload.records_mode = form.records_mode;
       // An empty token field means "keep the existing one" — only send it
       // when the admin actually typed a replacement, so we never blank out
       // a working credential by accident.
@@ -236,6 +266,7 @@ function EditHospitalSheet({
               placeholder="Leave blank to keep existing"
             />
           </div>
+          <RecordsModeField id="eRecords" value={form.records_mode} onChange={(v) => setForm((f) => ({ ...f, records_mode: v }))} />
           {err ? <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p> : null}
           <Button type="submit" className="w-full" disabled={busy}>
             {busy ? 'Saving…' : 'Save changes'}
@@ -346,10 +377,25 @@ export default function SuperAdminClinics() {
     }
   }
 
+  async function approve(clinic: ClinicSummary) {
+    const note =
+      clinic.records_mode === 'with_records'
+        ? `Approve ${clinic.name}? Its admin will then be able to open and manage patient records.`
+        : `Approve ${clinic.name}? (Plan without patient records — nothing will be stored.)`;
+    if (!confirm(note)) return;
+    try {
+      await api.patch(`/api/clinics/${clinic.id}`, { status: 'active' });
+      toast.success(`${clinic.name} approved`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to approve hospital');
+    }
+  }
+
   return (
     <AppShell
       title="Hospitals"
-      description="Every hospital on Sehat Saathi — onboard a new one, edit it, set up its QR and beds, or suspend it."
+      description="Every hospital on Sehat Saathi — add one, approve it, choose with or without patient records, set up its QR and beds, or suspend it."
       actions={
         <Button onClick={() => setAddOpen(true)}>
           <PlusCircle className="mr-1.5 size-4" />
@@ -386,8 +432,8 @@ export default function SuperAdminClinics() {
               <tr>
                 <th className="px-5 py-3 font-medium">Hospital</th>
                 <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium">Patient records</th>
                 <th className="px-5 py-3 font-medium">Patients</th>
-                <th className="px-5 py-3 font-medium">Open flags</th>
                 <th className="px-5 py-3 font-medium">Doctors</th>
                 <th className="px-5 py-3 font-medium" />
               </tr>
@@ -401,8 +447,8 @@ export default function SuperAdminClinics() {
                       {STATUS_LABEL[c.status]}
                     </span>
                   </td>
-                  <td className="px-5 py-3 text-muted-foreground">{c.patient_count}</td>
-                  <td className="px-5 py-3 text-muted-foreground">{c.open_flag_count}</td>
+                  <td className="px-5 py-3 text-muted-foreground">{RECORDS_LABEL[c.records_mode] ?? '—'}</td>
+                  <td className="px-5 py-3 text-muted-foreground">{c.records_mode === 'without_records' ? '—' : c.patient_count}</td>
                   <td className="px-5 py-3 text-muted-foreground">{c.doctor_count}</td>
                   <td className="px-5 py-3 text-right">
                     <div className="flex justify-end gap-2">
@@ -418,9 +464,15 @@ export default function SuperAdminClinics() {
                         <BedDouble className="mr-1.5 size-3.5" />
                         Beds
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => toggleSuspend(c)}>
-                        {c.status === 'suspended' ? 'Reactivate' : 'Suspend'}
-                      </Button>
+                      {c.status === 'onboarding' ? (
+                        <Button size="sm" onClick={() => approve(c)}>
+                          Approve
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" onClick={() => toggleSuspend(c)}>
+                          {c.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -3,7 +3,7 @@ const router = express.Router();
 const { pool } = require('../db');
 const { requireRole, hashPassword } = require('../services/auth.service');
 const { logAudit } = require('../services/audit.service');
-const { setRecordsMode, clearClinicAccessCache } = require('../services/records-access.service');
+const { setRecordsMode, clearClinicAccessCache, clinicAccessInfo, recordsAccessFor } = require('../services/records-access.service');
 
 const RECORD_MODES = ['with_records', 'without_records'];
 
@@ -19,7 +19,6 @@ router.get('/', requireRole('super_admin'), async (req, res) => {
         c.id, c.name, c.address, c.whatsapp_number, c.whatsapp_phone_number_id,
         c.status, c.records_mode, c.created_at,
         (SELECT COUNT(*) FROM patients p WHERE p.clinic_id = c.id) AS patient_count,
-        (SELECT COUNT(*) FROM flags f JOIN patients p ON f.patient_id = p.id WHERE p.clinic_id = c.id AND f.status = 'open') AS open_flag_count,
         (SELECT COUNT(*) FROM doctors d WHERE d.clinic_id = c.id) AS doctor_count
       FROM clinics c
       ORDER BY c.created_at DESC;
@@ -102,6 +101,11 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
  * Read-only clinic info for the Settings page.
  */
 router.get('/:id', async (req, res) => {
+  // Was readable without logging in.
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  if (req.user.role !== 'super_admin' && req.user.clinic_id !== req.params.id) {
+    return res.status(403).json({ error: 'Insufficient permissions.' });
+  }
   try {
     const { rows } = await pool.query(
       'SELECT id, name, address, whatsapp_number, whatsapp_phone_number_id, status, created_at FROM clinics WHERE id = $1',
@@ -119,15 +123,17 @@ router.get('/:id', async (req, res) => {
 
 /**
  * GET /api/clinics/:id/summary
- * Aggregate counts for the clinic-switcher view. Super admin can view any
- * clinic; other staff only their own.
+ * Aggregate counts for a hospital's own staff (never Super Admin).
  */
 router.get('/:id/summary', async (req, res) => {
   const { id } = req.params;
-  const isSuperAdmin = req.user?.role === 'super_admin';
-
-  if (!isSuperAdmin && req.user?.clinic_id !== id) {
+  // Flag / pending-prescription counts describe clinical activity: hospital
+  // staff of this clinic only, and only when records are open to them.
+  if (!req.user || req.user.role === 'super_admin' || req.user.clinic_id !== id) {
     return res.status(403).json({ error: 'Insufficient permissions.' });
+  }
+  if (recordsAccessFor(req.user.role, await clinicAccessInfo(id)) !== 'enabled') {
+    return res.status(403).json({ error: 'Patient records are not available for this hospital.' });
   }
 
   try {

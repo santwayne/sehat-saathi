@@ -8,7 +8,7 @@ import { formatINR } from '@/lib/format';
 import { api } from '@/lib/api';
 
 interface OverviewData {
-  hospitals: { total: number; active: number; onboarding: number; suspended: number };
+  hospitals: { total: number; active: number; onboarding: number; suspended: number; with_records: number; without_records: number };
   mrr_inr: number;
   subscriptions: { active: number; trial: number; past_due: number };
   revenue_30d_inr: number;
@@ -47,14 +47,14 @@ export default function Overview() {
             <Stat
               label="Hospitals"
               value={data.hospitals.total}
-              hint={`${data.hospitals.active} active · ${data.hospitals.onboarding} onboarding · ${data.hospitals.suspended} suspended`}
+              hint={`${data.hospitals.active} active · ${data.hospitals.onboarding} awaiting approval · ${data.hospitals.suspended} suspended · ${data.hospitals.with_records} with / ${data.hospitals.without_records} without records`}
             />
             <Stat
               label="MRR"
               value={formatINR(data.mrr_inr)}
               hint={`${data.subscriptions.active} paying · ${data.subscriptions.trial} on trial${data.subscriptions.past_due ? ` · ${data.subscriptions.past_due} past due` : ''}`}
             />
-            <Stat label="Active patients (30 days)" value={data.patients.active_30d} hint={`${data.patients.enrolled} enrolled in total`} />
+            <Stat label="Active patients (30 days)" value={data.patients.active_30d} hint={`${data.patients.enrolled} enrolled in total · counts only, never records`} />
             <Stat label="Collected (30 days)" value={formatINR(data.revenue_30d_inr)} hint="Payments recorded in Plans & Billing" />
           </div>
 

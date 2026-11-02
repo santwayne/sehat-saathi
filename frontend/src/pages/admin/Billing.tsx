@@ -19,6 +19,7 @@ interface Plan {
   patient_limit: number | null;
   features: string | null;
   active: boolean;
+  patient_records: boolean;
   hospital_count: number;
 }
 type SubStatus = 'trial' | 'active' | 'past_due' | 'cancelled';
@@ -35,6 +36,8 @@ interface Subscription {
   trial_ends_at: string | null;
   patient_count: number;
   patient_limit: number | null;
+  records_mode: 'with_records' | 'without_records';
+  patient_records: boolean | null;
 }
 interface Invoice {
   id: string;
@@ -70,7 +73,7 @@ function errMsg(e: unknown) {
 
 // ---------------------------------------------------------------- Plans
 function PlanSheet({ plan, open, onOpenChange, onSaved }: { plan: Plan | null; open: boolean; onOpenChange: (v: boolean) => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ name: '', price_monthly_inr: '', patient_limit: '', features: '', active: true });
+  const [form, setForm] = useState({ name: '', price_monthly_inr: '', patient_limit: '', features: '', active: true, patient_records: true });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -81,6 +84,7 @@ function PlanSheet({ plan, open, onOpenChange, onSaved }: { plan: Plan | null; o
       patient_limit: plan?.patient_limit ? String(plan.patient_limit) : '',
       features: plan?.features ?? '',
       active: plan?.active ?? true,
+      patient_records: plan?.patient_records ?? true,
     });
   }, [plan, open]);
 
@@ -125,6 +129,26 @@ function PlanSheet({ plan, open, onOpenChange, onSaved }: { plan: Plan | null; o
             <Label htmlFor="pFeatures">What's included</Label>
             <Input id="pFeatures" value={form.features} onChange={(e) => setForm({ ...form, features: e.target.value })} placeholder="WhatsApp check-ins, OCR, voice calls" />
           </div>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium text-foreground">Patient records</legend>
+            <label className="flex items-start gap-2 text-sm text-foreground">
+              <input type="radio" className="mt-1" checked={form.patient_records} onChange={() => setForm({ ...form, patient_records: true })} />
+              <span>
+                With patient records
+                <span className="block text-xs text-muted-foreground">Records are stored; the hospital admin manages them once the hospital is approved.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm text-foreground">
+              <input type="radio" className="mt-1" checked={!form.patient_records} onChange={() => setForm({ ...form, patient_records: false })} />
+              <span>
+                Without patient records
+                <span className="block text-xs text-muted-foreground">Nothing about patients is stored; the hospital gets no record pages.</span>
+              </span>
+            </label>
+            {plan && plan.hospital_count > 0 && (
+              <p className="text-xs text-muted-foreground">Changing this affects hospitals when their plan is next assigned.</p>
+            )}
+          </fieldset>
           <label className="flex items-center gap-2 text-sm text-foreground">
             <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
             Available for new subscriptions
@@ -189,7 +213,7 @@ function SubscriptionSheet({ sub, plans, onOpenChange, onSaved }: { sub: Subscri
               <option value="">— none —</option>
               {plans.map((p) => (
                 <option key={p.id} value={p.id} disabled={!p.active && p.id !== sub?.plan_id}>
-                  {p.name} · {formatINR(p.price_monthly_inr)}/mo{p.active ? '' : ' (retired)'}
+                  {p.name} · {formatINR(p.price_monthly_inr)}/mo · {p.patient_records ? 'with records' : 'no records'}{p.active ? '' : ' (retired)'}
                 </option>
               ))}
             </Select>
@@ -220,7 +244,10 @@ function SubscriptionSheet({ sub, plans, onOpenChange, onSaved }: { sub: Subscri
             <Label htmlFor="sOverride">Custom monthly price (₹)</Label>
             <Input id="sOverride" type="number" min="0" step="0.01" value={form.price_override_inr} onChange={(e) => setForm({ ...form, price_override_inr: e.target.value })} placeholder="Leave empty to use the plan price" />
           </div>
-          <p className="text-xs text-muted-foreground">Only Active and Past due count towards MRR. Trials count as zero.</p>
+          <p className="text-xs text-muted-foreground">
+            Only Active and Past due count towards MRR. Trials count as zero. The plan also sets whether this hospital keeps
+            patient records; moving a hospital that already has records to a no-records plan is refused.
+          </p>
           <Button type="submit" className="w-full" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
           </Button>
@@ -492,7 +519,7 @@ export default function Billing() {
 
             <TabsContent value="subscriptions" className="mt-6">
               <Section title="Hospital subscriptions" description="Which plan each hospital is on, trials and their end dates.">
-                <Table head={['Hospital', 'Plan', 'Status', 'Monthly', 'Trial ends', 'Patients', '']}>
+                <Table head={['Hospital', 'Plan', 'Patient records', 'Status', 'Monthly', 'Trial ends', 'Patients', '']}>
                   {subs.map((s) => {
                     const trialOver = s.status === 'trial' && s.trial_ends_at && new Date(s.trial_ends_at) < new Date();
                     const overLimit = s.patient_limit !== null && s.patient_count > s.patient_limit;
@@ -503,6 +530,9 @@ export default function Billing() {
                           {s.clinic_status === 'suspended' && <span className="ml-2 text-xs text-destructive">suspended</span>}
                         </td>
                         <td className={td}>{s.plan_name ?? <span className="text-muted-foreground">—</span>}</td>
+                        <td className={td}>
+                          {s.records_mode === 'with_records' ? <Pill tone="green">With records</Pill> : <Pill>Without records</Pill>}
+                        </td>
                         <td className={td}>{s.status ? <Pill tone={SUB_TONE[s.status]}>{SUB_LABEL[s.status]}</Pill> : <Pill tone="amber">No plan</Pill>}</td>
                         <td className={td}>
                           {s.status ? formatINR(s.effective_price_inr) : '—'}
@@ -637,12 +667,13 @@ export default function Billing() {
                 {plans.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No plans yet. Create one to start assigning hospitals.</p>
                 ) : (
-                  <Table head={['Plan', 'Monthly', 'Patient limit', 'Included', 'Hospitals', 'Status', '']}>
+                  <Table head={['Plan', 'Monthly', 'Patient records', 'Patient limit', 'Included', 'Hospitals', 'Status', '']}>
                     {plans.map((p) => (
                       <tr key={p.id}>
                         <td className={`${td} font-medium text-foreground`}>{p.name}</td>
                         <td className={td}>{formatINR(p.price_monthly_inr)}</td>
-                        <td className={td}>{p.patient_limit ?? 'Unlimited'}</td>
+                        <td className={td}>{p.patient_records ? <Pill tone="green">With records</Pill> : <Pill>Without records</Pill>}</td>
+                        <td className={td}>{p.patient_records ? p.patient_limit ?? 'Unlimited' : '—'}</td>
                         <td className={`${td} text-muted-foreground`}>{p.features ?? '—'}</td>
                         <td className={td}>{p.hospital_count}</td>
                         <td className={td}>{p.active ? <Pill tone="green">Available</Pill> : <Pill>Retired</Pill>}</td>
