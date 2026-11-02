@@ -152,3 +152,21 @@ Super Admin is now a **platform operator**: it runs hospitals, money, keys and e
 **Removed for Super Admin:** Dashboard, Patients, Prescriptions, Flags, Refills pages and the hospital switcher. On the API side `patientDataGuard` (`services/break-glass.service.js`) sits in front of `/api/patients`, `/api/prescriptions`, `/api/flags` and `/api/refill-orders`: it rejects unauthenticated calls, and rejects Super Admin unless it holds a **break-glass** grant.
 
 **Break-glass:** Super Admin requests access to one hospital with a reason and a window (15 min–24 h) → that hospital's admin approves or denies it in their Settings page → while active, Super Admin gets **GET-only** access to that hospital only, every request is written to `audit_log`, and either side can end it early. There is no patient-viewing screen for Super Admin yet; access under a grant is API-only.
+
+## 9. Regulars integration (retention, Super Admin only)
+
+Apply `src/db/migrations/006_regulars_integration.sql` (idempotent; `schema.sql` includes it). Needs the Regulars app to have its inbound events API (`/api/v1/events`, `/api/v1/ping` — the `regularsplatform` "Inbound events API" change).
+
+**Setup (Super Admin → Integrations):** set the Regulars URL on the "Regulars (retention)" card → for each hospital, create a Regulars business, issue a key in Regulars → Admin → API keys, then **Connect** it here (key stored AES-256-GCM encrypted; optional Regulars location id) → **Test connection** → turn sync on → optionally **Backfill** existing patients.
+
+**What is sent** (consenting patients only, never with the kill switch on; phone with country code, first name, dates — no diagnoses, medicines or documents):
+
+| Sehat Saathi event | Regulars event | External id |
+|---|---|---|
+| Patient enrolled (staff-added or QR self-enrolment) | `CUSTOMER` | `patient:<id>` |
+| Staff verify a patient's document (= a real visit) | `VISIT` (idempotent on re-verify) | `doc:<id>` |
+| Kill switch turned on, or patient deleted | `OPT_OUT` (pending events for them are cancelled) | `optout:<id>` |
+
+Events go through `regulars_outbox` and are pushed asynchronously (right away, then every 5 min on the persistent server / daily via `/api/cron/regulars-sync` on Vercel) with exponential backoff up to 10 attempts. Events Regulars rejects are marked failed with the reason (shown per hospital, retryable). Delivered rows have phone/name cleared. Failures show in Platform Health and as an Overview alert; every settings change is audited (keys are never logged or returned).
+
+Turning the kill switch back off does **not** undo the Regulars opt-out — only the business owner can do that in Regulars.

@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { api } from '@/lib/api';
+import { RegularsSection } from '@/components/app/RegularsSection';
 
 interface Field {
   key: string;
@@ -226,7 +227,7 @@ export default function Integrations() {
   const clinicName = (scope: string) => (scope === 'global' ? 'Platform default' : data?.clinics.find((c) => c.id === scope)?.name ?? scope);
 
   return (
-    <AppShell title="Integrations" description="WhatsApp, Twilio and ABDM keys, each hospital's WhatsApp setup, and WhatsApp template approval status.">
+    <AppShell title="Integrations" description="WhatsApp, Twilio, ABDM and Regulars connections, each hospital's WhatsApp setup, and WhatsApp template approval status.">
       <ProviderSheet provider={editing} onOpenChange={(v) => !v && setEditing(null)} onSaved={load} />
       {error ? (
         <ErrorState error={error} onRetry={load} />
@@ -241,7 +242,7 @@ export default function Integrations() {
             </p>
           )}
 
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2">
             {data.providers.map((p) => (
               <section key={p.id} className="flex flex-col rounded-xl border border-border bg-card p-5">
                 <div className="flex items-start justify-between gap-2">
@@ -283,6 +284,8 @@ export default function Integrations() {
           <p className="-mt-3 text-xs text-muted-foreground">
             <span className="text-primary">•</span> = value saved in this console (overrides server env).
           </p>
+
+          <RegularsSection baseUrlConfigured={!!data.providers.find((p) => p.id === 'regulars')?.configured} />
 
           <Section title="Hospital WhatsApp numbers" description="Each hospital's own WhatsApp credentials. Number and token are edited on the Hospitals page; add the WABA ID here to read template status.">
             <Table head={['Hospital', 'Number', 'Phone number ID', 'Access token', 'WABA ID']}>

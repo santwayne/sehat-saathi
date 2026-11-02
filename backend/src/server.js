@@ -7,6 +7,7 @@ const { scanAndScheduleDueCheckins } = require('./services/scheduler.service');
 const { reassignStaleFlags } = require('./services/escalation.service');
 const { sendWeeklyDigests } = require('./services/family.service');
 const { sendDueRefillReminders } = require('./services/refill.service');
+const { flushOutbox: flushRegulars } = require('./services/regulars.service');
 
 // Run the check-in scanner every 15 minutes
 setInterval(() => {
@@ -24,6 +25,11 @@ setInterval(() => {
   sendWeeklyDigests().catch((err) => console.error('Family digest scan failed:', err));
   sendDueRefillReminders().catch((err) => console.error('Refill reminder scan failed:', err));
 }, 6 * 60 * 60 * 1000);
+
+// Push queued Regulars events (no-op unless a hospital is connected).
+setInterval(() => {
+  flushRegulars().catch((err) => console.error('Regulars sync failed:', err));
+}, 5 * 60 * 1000);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Sehat Saathi API active on port ${PORT}`));

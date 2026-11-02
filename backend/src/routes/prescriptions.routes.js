@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { requireRole } = require('../services/auth.service');
+const regulars = require('../services/regulars.service');
 
 /**
  * GET /api/prescriptions/pending?clinic_id=
@@ -96,6 +97,10 @@ router.post('/:id/verify', async (req, res) => {
     await client.query(upsertSchedule, [prescription.patient_id, prescription.id]);
 
     await client.query('COMMIT');
+
+    // A verified document means the patient really visited: report it to
+    // Regulars if this hospital is connected (idempotent on re-verify).
+    await regulars.onDocumentVerified(prescription.id);
 
     return res.status(200).json({
       success: true,
