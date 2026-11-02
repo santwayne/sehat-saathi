@@ -9,8 +9,8 @@ const { handleSelfEnrollment, extractBedCode, findBedByCode } = require('../serv
 const { handleFamilyMessage } = require('../services/family.service');
 const { matchDoctor, logMatchAttempt } = require('../services/doctor-match.service');
 const { transcribeAudio } = require('../services/azure-speech.service');
+const { recordPlatformEvent } = require('../services/platform-events.service');
 
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 
 // Meta Webhook Verification Endpoint
 router.get('/webhook', (req, res) => {
@@ -18,7 +18,10 @@ router.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode && token === VERIFY_TOKEN) {
+  // Read per request so a verify token saved in Integrations applies at once;
+  // an unset token must never match an absent one.
+  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+  if (mode && verifyToken && token === verifyToken) {
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
@@ -50,6 +53,12 @@ router.post('/webhook', async (req, res) => {
 
     if (!clinic) {
       console.error(`Webhook hit for unregistered phone_number_id ${incomingPhoneNumberId} — no clinic has this WhatsApp number configured.`);
+      await recordPlatformEvent({
+        source: 'webhook',
+        severity: 'warning',
+        message: `Inbound message for unregistered WhatsApp phone_number_id ${incomingPhoneNumberId} was dropped`,
+        details: { phone_number_id: incomingPhoneNumberId },
+      });
       return;
     }
 
@@ -128,6 +137,7 @@ router.post('/webhook', async (req, res) => {
         // follow-up, rather than the message vanishing with only a server
         // log line no one will see.
         console.error('Failed to download WhatsApp media:', err.message);
+        await recordPlatformEvent({ source: 'media', clinicId: clinic.id, message: `Document photo download failed: ${err.message}` });
         await createEscalationFlag({
           patientId: patient.id,
           conversationId: inboundConversationId,
@@ -149,6 +159,9 @@ router.post('/webhook', async (req, res) => {
       // returns a safe fail-safe result on failure, so no separate
       // try/catch is needed here.
       const ocrResult = await processPrescriptionOCR(base64, mimeType);
+      if (ocrResult.failed) {
+        await recordPlatformEvent({ source: 'ocr', clinicId: clinic.id, message: `OCR failed: ${ocrResult.failureReason}` });
+      }
 
       // Persist immediately with verified_by_staff = false — nothing derived from this
       // reaches the patient until staff verify it (Section 4.1, step 3).
@@ -207,6 +220,7 @@ router.post('/webhook', async (req, res) => {
         downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
       } catch (err) {
         console.error('Failed to download WhatsApp voice note:', err.message);
+        await recordPlatformEvent({ source: 'media', clinicId: clinic.id, message: `Voice note download failed: ${err.message}` });
         await sendWhatsAppMessage(senderPhone, 'Thank you. We received your voice note but had trouble processing it — please try again.', clinic.id);
         return;
       }
@@ -244,6 +258,11 @@ router.post('/webhook', async (req, res) => {
     }
   } catch (error) {
     console.error('Error handling webhook payload:', error);
+    await recordPlatformEvent({
+      source: 'webhook',
+      message: `Webhook processing error: ${error.message}`,
+      details: { phone_number_id: req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id || null },
+    });
   }
 });
 

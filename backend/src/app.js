@@ -17,11 +17,17 @@ const bedRoutes = require('./routes/beds.routes');
 const pharmacyRoutes = require('./routes/pharmacy.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const voiceRoutes = require('./routes/voice.routes');
+const adminRoutes = require('./routes/admin.routes');
+const breakGlassRoutes = require('./routes/break-glass.routes');
+const { patientDataGuard } = require('./services/break-glass.service');
+const { ensureIntegrationsLoaded } = require('./services/integrations.service');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(attachUser);
+// Applies keys saved in Super Admin → Integrations on top of env vars.
+app.use(ensureIntegrationsLoaded);
 
 // Basic health check
 app.get('/health', (req, res) => {
@@ -31,9 +37,12 @@ app.get('/health', (req, res) => {
 // Mount API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
-app.use('/api/prescriptions', prescriptionRoutes);
-app.use('/api/flags', flagRoutes);
-app.use('/api/patients', patientRoutes);
+// Patient data: authenticated staff only; Super Admin only via an approved,
+// read-only break-glass grant (see services/break-glass.service.js).
+app.use('/api/prescriptions', patientDataGuard, prescriptionRoutes);
+app.use('/api/flags', patientDataGuard, flagRoutes);
+app.use('/api/patients', patientDataGuard, patientRoutes);
+app.use('/api/refill-orders', patientDataGuard);
 app.use('/api/staff', staffRoutes);
 app.use('/api/doctors', doctorRoutes);
 app.use('/api/clinics', clinicRoutes);
@@ -41,6 +50,8 @@ app.use('/api/pilot-requests', pilotRequestRoutes);
 app.use('/api/beds', bedRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/voice', voiceRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/break-glass', breakGlassRoutes);
 // /api/pharmacy-partners and /api/refill-orders
 app.use('/api', pharmacyRoutes);
 // Cron-triggered endpoints (Vercel Cron hits these — see vercel.json). On AWS,

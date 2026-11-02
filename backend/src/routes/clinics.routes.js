@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { requireRole, hashPassword } = require('../services/auth.service');
+const { logAudit } = require('../services/audit.service');
 
 /**
  * GET /api/clinics
@@ -71,6 +72,12 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
     );
 
     await client.query('COMMIT');
+    await logAudit(req, 'clinic.create', {
+      targetType: 'clinic',
+      targetId: clinic.id,
+      clinicId: clinic.id,
+      details: { name, admin_name, admin_phone },
+    });
     return res.status(201).json({ success: true, data: { clinic, admin: adminRes.rows[0] } });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -187,6 +194,16 @@ router.patch('/:id', requireRole('super_admin'), async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Clinic not found.' });
     }
+    // Field names only for credentials — never the token value.
+    const changed = Object.keys(req.body).filter((k) =>
+      ['name', 'address', 'status', 'whatsapp_number', 'whatsapp_phone_number_id', 'whatsapp_access_token'].includes(k)
+    );
+    await logAudit(req, status !== undefined && changed.length === 1 ? `clinic.${status === 'suspended' ? 'suspend' : 'status_change'}` : 'clinic.update', {
+      targetType: 'clinic',
+      targetId: id,
+      clinicId: id,
+      details: { fields: changed, ...(status !== undefined ? { status } : {}) },
+    });
     return res.status(200).json({ success: true, data: rows[0] });
   } catch (error) {
     if (error.code === '23505') {

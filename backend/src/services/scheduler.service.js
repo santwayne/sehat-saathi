@@ -1,6 +1,7 @@
 const { Queue, Worker } = require('bullmq');
 const Redis = require('ioredis');
 const { pool } = require('../db');
+const { recordPlatformEvent } = require('./platform-events.service');
 const { sendWhatsAppTemplate } = require('./whatsapp.service');
 const voice = require('./voice.service');
 
@@ -41,6 +42,7 @@ const checkinWorker = new Worker(
         return;
       } catch (callErr) {
         console.error(`Voice check-in call failed for patient ${patientId}, using WhatsApp:`, callErr.message);
+        await recordPlatformEvent({ source: 'voice', severity: 'warning', clinicId, message: `Voice check-in call failed, fell back to WhatsApp: ${callErr.message}` });
       }
     }
 
@@ -67,6 +69,12 @@ const checkinWorker = new Worker(
 
 checkinWorker.on('failed', (job, err) => {
   console.error(`Check-in job ${job?.id} failed:`, err);
+  recordPlatformEvent({
+    source: 'queue',
+    clinicId: job?.data?.clinicId || null,
+    message: `Check-in job failed: ${err?.message || err}`,
+    details: { job_id: job?.id, schedule_id: job?.data?.scheduleId, attempts: job?.attemptsMade },
+  });
 });
 
 /**
@@ -110,6 +118,7 @@ async function scanAndScheduleDueCheckins() {
     }
   } catch (err) {
     console.error('Error scanning due check-ins:', err);
+    await recordPlatformEvent({ source: 'queue', message: `Check-in scan failed: ${err.message}` });
   }
 }
 
