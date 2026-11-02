@@ -76,7 +76,7 @@ function kick(clinicId) {
 /** A consenting patient just enrolled (staff-added or QR self-enrollment). */
 async function onPatientEnrolled(patient) {
   try {
-    if (!patient?.consent_given || patient.kill_switch_active) return;
+    if (!patient?.consent_given || patient.kill_switch_active || patient.followup_opt_out) return;
     const queued = await enqueue({
       clinicId: patient.clinic_id,
       patientId: patient.id,
@@ -96,12 +96,12 @@ async function onPatientEnrolled(patient) {
 async function onDocumentVerified(prescriptionId) {
   try {
     const { rows } = await pool.query(
-      `SELECT pr.id, pr.created_at, p.id AS patient_id, p.clinic_id, p.phone, p.name, p.consent_given, p.kill_switch_active
+      `SELECT pr.id, pr.created_at, p.id AS patient_id, p.clinic_id, p.phone, p.name, p.consent_given, p.kill_switch_active, p.followup_opt_out
        FROM prescriptions pr JOIN patients p ON p.id = pr.patient_id WHERE pr.id = $1`,
       [prescriptionId]
     );
     const r = rows[0];
-    if (!r || !r.consent_given || r.kill_switch_active) return;
+    if (!r || !r.consent_given || r.kill_switch_active || r.followup_opt_out) return;
     const queued = await enqueue({
       clinicId: r.clinic_id,
       patientId: r.patient_id,
@@ -117,7 +117,7 @@ async function onDocumentVerified(prescriptionId) {
   }
 }
 
-/** Kill switch on, or patient deleted: Regulars must never target them again. */
+/** Kill switch on, patient replied STOP, or patient deleted: Regulars must never target them again. */
 async function onPatientOptOut(patient) {
   try {
     if (!patient?.clinic_id) return;
@@ -341,13 +341,14 @@ async function backfill(clinicId) {
 
   const customers = await pool.query(
     `SELECT id, phone, name, created_at FROM patients
-     WHERE clinic_id = $1 AND consent_given = true AND kill_switch_active = false`,
+     WHERE clinic_id = $1 AND consent_given = true AND kill_switch_active = false AND followup_opt_out = false`,
     [clinicId]
   );
   const visits = await pool.query(
     `SELECT pr.id, pr.created_at, p.id AS patient_id, p.phone, p.name FROM prescriptions pr
      JOIN patients p ON p.id = pr.patient_id
-     WHERE p.clinic_id = $1 AND pr.verified_by_staff = true AND p.consent_given = true AND p.kill_switch_active = false`,
+     WHERE p.clinic_id = $1 AND pr.verified_by_staff = true AND p.consent_given = true AND p.kill_switch_active = false
+       AND p.followup_opt_out = false`,
     [clinicId]
   );
   let queued = 0;

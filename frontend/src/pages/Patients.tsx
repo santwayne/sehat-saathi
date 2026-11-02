@@ -229,7 +229,13 @@ function AddPatientSheet({
               onChange={(e) => setForm((f) => ({ ...f, consent_given: e.target.checked }))}
               className="h-4 w-4 accent-primary"
             />
-            <span className="text-sm">Patient has given verbal consent to receive WhatsApp messages</span>
+            <span className="text-sm">
+              Patient has given verbal consent to receive WhatsApp messages
+              <span className="block text-xs text-muted-foreground">
+                If your hospital uses follow-up visit reminders, tell the patient they may be contacted about follow-up
+                visits (phone, first name and visit dates only) and can reply STOP anytime.
+              </span>
+            </span>
           </label>
           <Button type="submit" disabled={busy} className="w-full">
             {busy ? 'Enrolling…' : 'Enroll patient'}
