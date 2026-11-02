@@ -509,3 +509,10 @@ BEGIN
      WHERE status IN ('pending', 'approved');
   END IF;
 END $$;
+
+-- Same as migrations/008: follow-up opt-out
+-- A patient who replies STOP opts out of follow-up-visit contact (Regulars
+-- win-back calls). Care messages (check-ins, reminders) are not affected;
+-- stopping those stays a staff decision (kill switch).
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS followup_opt_out BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS followup_opt_out_at TIMESTAMP WITH TIME ZONE;

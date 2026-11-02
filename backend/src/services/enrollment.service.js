@@ -35,10 +35,23 @@ async function findBedByCode(clinicId, code) {
   return rows[0] || null;
 }
 
+// Shown in the consent step only for hospitals connected to Regulars
+// (follow-up visit contact), so patients are told before they agree.
+const FOLLOWUP_NOTICE =
+  'Your hospital may also contact you about follow-up visits. Only your phone number, first name and visit dates are used for this — never your medical details. Reply STOP anytime to opt out.\n\n' +
+  'आपका अस्पताल फ़ॉलो-अप विज़िट के लिए आपसे संपर्क कर सकता है। इसके लिए सिर्फ़ आपका फ़ोन नंबर, पहला नाम और विज़िट की तारीख़ें इस्तेमाल होती हैं — आपकी मेडिकल जानकारी कभी नहीं। बंद करने के लिए कभी भी STOP लिखें।';
+
+async function followupEnabled(clinicId) {
+  const { rows } = await pool.query('SELECT 1 FROM clinic_regulars WHERE clinic_id = $1 AND enabled = true', [clinicId]);
+  return rows.length > 0;
+}
+
 const MESSAGES = {
   welcome: (hospitalName) => `Welcome to ${hospitalName} on Sehat Saathi. What's your name?`,
   welcomeBed: (hospitalName, bedLabel) => `Welcome to ${hospitalName} on Sehat Saathi (${bedLabel}). What's your name?`,
-  consent: (name) => `Thanks, ${name}. Reply YES to receive your prescription updates, reminders, and check-ins on this WhatsApp number.`,
+  consent: (name, withFollowup) =>
+    `Thanks, ${name}. Reply YES to receive your prescription updates, reminders, and check-ins on this WhatsApp number.` +
+    (withFollowup ? `\n\n${FOLLOWUP_NOTICE}` : ''),
   consentUnclear: "Sorry, I didn't quite get that. Please reply YES if you'd like to be enrolled and receive updates on WhatsApp.",
   askDoctorSignal: 'Got it. Please send a photo of the prescription or report you received today, or a short voice note telling us which doctor you saw.',
   // doctorName/name here is doctors.name, which by this codebase's own
@@ -326,7 +339,7 @@ async function handleSelfEnrollment({ clinicId, senderPhone, messageType, messag
       return;
     }
     await updatePending(pending.id, { name: name.slice(0, 255), stage: 'awaiting_consent' });
-    await notify(clinic.id, senderPhone, MESSAGES.consent(name));
+    await notify(clinic.id, senderPhone, MESSAGES.consent(name, await followupEnabled(clinic.id)));
     return;
   }
 

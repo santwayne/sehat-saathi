@@ -10,6 +10,10 @@ const { handleFamilyMessage } = require('../services/family.service');
 const { matchDoctor, logMatchAttempt } = require('../services/doctor-match.service');
 const { transcribeAudio } = require('../services/azure-speech.service');
 const { recordPlatformEvent } = require('../services/platform-events.service');
+const regulars = require('../services/regulars.service');
+
+// Whole-message opt-out words (English / Hinglish / Hindi / Punjabi).
+const STOP_WORDS = /^\s*(stop|unsubscribe|band karo|bandh karo|mat bhejo|बंद|बंद करो|ਬੰਦ|ਬੰਦ ਕਰੋ)\s*[.!]*\s*$/i;
 
 
 // Meta Webhook Verification Endpoint
@@ -87,7 +91,7 @@ router.post('/webhook', async (req, res) => {
     // one deployment, but very possible now that multiple hospitals share
     // this one webhook.
     const patientRes = await pool.query(
-      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id, consent_given, bed_id FROM patients WHERE phone = $1 AND clinic_id = $2',
+      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id, consent_given, bed_id, followup_opt_out FROM patients WHERE phone = $1 AND clinic_id = $2',
       [senderPhone, clinic.id]
     );
     const patient = patientRes.rows[0];
@@ -111,6 +115,22 @@ router.post('/webhook', async (req, res) => {
     // second gate in case a pre-existing row without consent is still in the DB.
     if (!patient.consent_given) {
       console.log(`Message from ${senderPhone} ignored: consent not on file.`);
+      return;
+    }
+
+    // STOP: opt out of follow-up-visit contact (Regulars). Care messages are
+    // not touched here — stopping those remains a staff decision.
+    if (messageType === 'text' && STOP_WORDS.test(message.text?.body || '')) {
+      if (!patient.followup_opt_out) {
+        await pool.query('UPDATE patients SET followup_opt_out = true, followup_opt_out_at = NOW() WHERE id = $1', [patient.id]);
+        await regulars.onPatientOptOut({ id: patient.id, clinic_id: clinic.id, phone: senderPhone });
+      }
+      await sendWhatsAppMessage(
+        senderPhone,
+        "Done — you won't be contacted about follow-up visits. Your treatment reminders continue; to stop those too, please tell the hospital.\n\n" +
+          'हो गया — फ़ॉलो-अप विज़िट के लिए अब आपसे संपर्क नहीं किया जाएगा। इलाज के रिमाइंडर जारी रहेंगे; उन्हें भी बंद करने के लिए अस्पताल को बताएं।',
+        clinic.id
+      ).catch((err) => console.error('STOP confirmation failed:', err.message));
       return;
     }
 

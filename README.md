@@ -183,3 +183,11 @@ Apply `src/db/migrations/007_records_plans.sql` (idempotent; `schema.sql` includ
 - Moving a hospital that still has stored patient records to "without" is refused (409): Super Admin cannot see or delete those records, so the hospital deals with its own data first.
 - Enforcement is server-side in `services/records-access.service.js` (`patientRecordsGuard` on `/api/patients`, `/api/prescriptions`, `/api/flags`, `/api/refill-orders`, `/api/analytics`); the UI only mirrors it (`records_access` on login and `/api/auth/me`). Bed occupant names, clinic flag/prescription counts and clinic summaries are not shown to Super Admin either.
 - WhatsApp check-ins, document reading and reminders need stored data, so they only run for hospitals **with** patient records.
+
+## 11. Follow-up consent + STOP
+
+Apply `src/db/migrations/008_followup_opt_out.sql`.
+
+- For hospitals connected to Regulars, the WhatsApp consent step now tells the patient (English + Hindi) that the hospital may contact them about follow-up visits using only phone, first name and visit dates, and that they can reply STOP anytime. Hospitals not connected to Regulars see the old text. The staff enrolment form's consent checkbox carries the same note.
+- An enrolled patient replying exactly STOP / unsubscribe / band karo / mat bhejo / बंद / ਬੰਦ sets `patients.followup_opt_out`, sends `OPT_OUT` to Regulars, cancels anything still queued for them, and gets a confirmation. Treatment check-ins and reminders continue — stopping those stays a staff decision (kill switch). A sentence that merely contains "stop" is not treated as an opt-out.
+- Opted-out patients are never sent to Regulars again (enrolment, verified visits, backfill).
