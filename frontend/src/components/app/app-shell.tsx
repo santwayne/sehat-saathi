@@ -1,11 +1,26 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { BarChart3, Building2, Flag, LayoutDashboard, LogOut, Pill, PillBottle, Settings, Users } from 'lucide-react';
+import {
+  Activity,
+  BarChart3,
+  Building2,
+  CreditCard,
+  Flag,
+  LayoutDashboard,
+  LogOut,
+  Pill,
+  PillBottle,
+  Plug,
+  ScrollText,
+  Settings,
+  TrendingUp,
+  Users,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { useClinicSwitcher } from '@/context/ClinicContext';
 import { cn } from '@/lib/utils';
 
-const NAV = [
+// Hospital staff: clinical work for their own hospital.
+const CLINIC_NAV = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/app/flags', label: 'Flags', icon: Flag, end: false },
   { to: '/app/prescriptions', label: 'Prescriptions', icon: Pill, end: false },
@@ -13,7 +28,18 @@ const NAV = [
   { to: '/app/refills', label: 'Refills', icon: PillBottle, end: false },
   { to: '/app/analytics', label: 'Analytics', icon: BarChart3, end: false },
   { to: '/app/settings', label: 'Settings', icon: Settings, end: false },
+] as const;
+
+// Super Admin: runs the platform. No patient-level pages by design.
+const SUPER_ADMIN_NAV = [
+  { to: '/app/overview', label: 'Overview', icon: LayoutDashboard, end: false },
   { to: '/app/clinics', label: 'Hospitals', icon: Building2, end: false },
+  { to: '/app/billing', label: 'Plans & Billing', icon: CreditCard, end: false },
+  { to: '/app/usage', label: 'Usage & Profit', icon: TrendingUp, end: false },
+  { to: '/app/integrations', label: 'Integrations', icon: Plug, end: false },
+  { to: '/app/health', label: 'Platform Health', icon: Activity, end: false },
+  { to: '/app/audit', label: 'Audit Log', icon: ScrollText, end: false },
+  { to: '/app/account', label: 'Settings', icon: Settings, end: false },
 ] as const;
 
 const ROLE_LABEL: Record<string, string> = {
@@ -23,28 +49,6 @@ const ROLE_LABEL: Record<string, string> = {
   doctor: 'Doctor',
   super_admin: 'Super Admin',
 };
-
-// Clinic-switcher dropdown shown only to super_admin — picks which
-// hospital's data the rest of the console (Dashboard/Patients/Flags/
-// Prescriptions) is currently scoped to (Super Admin spec, A8).
-function ClinicSwitcher() {
-  const { clinics, selectedClinicId, setSelectedClinicId } = useClinicSwitcher();
-  if (clinics.length === 0) return null;
-  return (
-    <select
-      value={selectedClinicId ?? ''}
-      onChange={(e) => setSelectedClinicId(e.target.value || null)}
-      aria-label="Viewing hospital"
-      className="hidden rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:block"
-    >
-      {clinics.map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.name}
-        </option>
-      ))}
-    </select>
-  );
-}
 
 function initials(name: string) {
   return name
@@ -69,20 +73,21 @@ export function AppShell({
   const { staff, logout } = useAuth();
   const location = useLocation();
 
-  const visibleNav = NAV.filter((item) => {
-    if (item.to === '/app/clinics') return staff?.role === 'super_admin';
-    // Super admin manages hospitals via /app/clinics, not the single-clinic Settings page.
-    if (item.to === '/app/settings') return staff?.role === 'admin';
-    if (item.to === '/app/analytics') return staff?.role !== 'doctor';
-    return true;
-  });
+  const isSuperAdmin = staff?.role === 'super_admin';
+  const visibleNav = isSuperAdmin
+    ? SUPER_ADMIN_NAV
+    : CLINIC_NAV.filter((item) => {
+        if (item.to === '/app/settings') return staff?.role === 'admin';
+        if (item.to === '/app/analytics') return staff?.role !== 'doctor';
+        return true;
+      });
 
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
         <div className="px-4 pb-4 pt-5">
           <img src="/brand/logo-full.png" alt="Sehat Saathi" className="mx-auto w-full max-w-[8.5rem] object-contain" />
-          <p className="mt-2 text-center text-xs text-muted-foreground">Clinic companion</p>
+          <p className="mt-2 text-center text-xs text-muted-foreground">{isSuperAdmin ? 'Platform console' : 'Clinic companion'}</p>
         </div>
 
         <nav className="flex-1 space-y-1 px-3" aria-label="Main">
@@ -110,7 +115,7 @@ export function AppShell({
         </nav>
 
         <div className="border-t border-sidebar-border px-5 py-4 text-xs text-muted-foreground">
-          {staff?.clinic_id ? `Clinic ${staff.clinic_id}` : 'Sehat Saathi'}
+          {isSuperAdmin ? 'Sehat Saathi · Super Admin' : staff?.clinic_id ? `Clinic ${staff.clinic_id}` : 'Sehat Saathi'}
         </div>
       </aside>
 
@@ -136,8 +141,10 @@ export function AppShell({
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-3">
-            {staff?.role === 'super_admin' ? (
-              <ClinicSwitcher />
+            {isSuperAdmin ? (
+              <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
+                Platform operator · no patient data
+              </span>
             ) : (
               <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
                 {staff?.role === 'doctor' ? 'Your patients only' : 'Clinic-wide'}

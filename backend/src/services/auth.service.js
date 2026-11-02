@@ -59,10 +59,17 @@ function isSuperAdmin(req) {
   return req.user?.role === 'super_admin';
 }
 
-// Super admin may touch any clinic; everyone else only their own (from the token).
+// Everyone else only their own clinic (from the token). Super admin may touch
+// any clinic for platform resources (beds, pharmacy partners); on patient-data
+// routes patientDataGuard sets req.breakGlassClinicIds and super admin is then
+// limited to the hospitals it holds an approved break-glass grant for.
 function canAccessClinic(req, clinicId) {
   if (!req.user) return false;
-  return isSuperAdmin(req) || (!!clinicId && req.user.clinic_id === clinicId);
+  if (isSuperAdmin(req)) {
+    if (Array.isArray(req.breakGlassClinicIds)) return !!clinicId && req.breakGlassClinicIds.includes(clinicId);
+    return true;
+  }
+  return !!clinicId && req.user.clinic_id === clinicId;
 }
 
 module.exports = { hashPassword, verifyPassword, issueToken, verifyToken, attachUser, requireRole, isSuperAdmin, canAccessClinic };

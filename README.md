@@ -131,3 +131,24 @@ Apply `src/db/migrations/003_family_beds_abha_refills.sql` to an existing databa
 WhatsApp message templates to create and get approved in Meta (business-initiated messages need them; the code falls back to plain text inside the 24h window): `family_invite` (3 params), `family_weekly_digest` (3), `refill_reminder` (3).
 
 Migration `004_abdm_enrolment_and_voice.sql` adds the ABHA enrolment session table, `abha_verified_by_abdm` and `conversations.external_id`. See `backend/.env.example` for the ABDM and Twilio settings.
+
+## 8. Super Admin platform console
+
+Apply `src/db/migrations/005_super_admin_platform_console.sql` to an existing database (idempotent; `schema.sql` already includes it). Set `INTEGRATIONS_ENCRYPTION_KEY` (see `backend/.env.example`) before saving production keys from the console.
+
+Super Admin is now a **platform operator**: it runs hospitals, money, keys and errors, and has **no access to patient data**.
+
+| Page | What it does | API |
+|---|---|---|
+| Overview | Hospitals by status, MRR (active + past-due subscriptions; trials count as 0), active patients (inbound message in 30 days), collected revenue, alerts (trials ending, overdue invoices, platform errors, missing WhatsApp setup, hospitals with no plan, pending break-glass) | `GET /api/admin/overview` |
+| Hospitals | Unchanged: onboard, edit, suspend, hospital QR, bed QR | `/api/clinics` |
+| Plans & Billing | Plans; one subscription/trial per hospital (with optional custom price); invoices (`SS-YYYYMM-0001`, overdue is derived); payments recorded manually, auto-marking an invoice paid once covered | `/api/admin/plans`, `/subscriptions`, `/invoices`, `/payments` |
+| Usage & Profit | Per hospital per month: check-in + other WhatsApp messages, AI-handled inbound messages (estimate), OCR documents, voice calls → cost via editable unit costs; revenue = payments that month; margin | `/api/admin/usage`, `/unit-costs` |
+| Integrations | WhatsApp (platform default), Twilio and ABDM keys — saved AES-256-GCM encrypted, override the env var of the same name, applied without a restart; live "Test" per provider; per-hospital WhatsApp status + WABA ID; WhatsApp template status synced from Meta | `/api/admin/integrations*` |
+| Platform Health | Webhook, check-in queue, OCR, WhatsApp-send, media and voice errors (`platform_events`; ids and error text only, never patient details) | `/api/admin/health*` |
+| Audit Log | Every Super Admin / admin action (logins, hospital changes, billing, keys, password changes) + break-glass requests | `/api/admin/audit`, `/api/admin/break-glass*` |
+| Settings | Super Admin's own name/phone/email and password | `PATCH /api/auth/me`, `POST /api/auth/change-password` (any role) |
+
+**Removed for Super Admin:** Dashboard, Patients, Prescriptions, Flags, Refills pages and the hospital switcher. On the API side `patientDataGuard` (`services/break-glass.service.js`) sits in front of `/api/patients`, `/api/prescriptions`, `/api/flags` and `/api/refill-orders`: it rejects unauthenticated calls, and rejects Super Admin unless it holds a **break-glass** grant.
+
+**Break-glass:** Super Admin requests access to one hospital with a reason and a window (15 min–24 h) → that hospital's admin approves or denies it in their Settings page → while active, Super Admin gets **GET-only** access to that hospital only, every request is written to `audit_log`, and either side can end it early. There is no patient-viewing screen for Super Admin yet; access under a grant is API-only.

@@ -1,4 +1,5 @@
 const { pool } = require('../db');
+const { recordPlatformEvent } = require('./platform-events.service');
 const { sendWhatsAppMessage } = require('./whatsapp.service');
 const { t } = require('./i18n');
 const voice = require('./voice.service');
@@ -33,6 +34,7 @@ async function sendDueCheckinsDirectly() {
           calledInstead = true;
         } catch (callErr) {
           console.error(`Voice check-in call failed for patient ${row.patient_id}, falling back to WhatsApp:`, callErr.message);
+          await recordPlatformEvent({ source: 'voice', severity: 'warning', clinicId: row.clinic_id || null, message: `Voice check-in call failed, fell back to WhatsApp: ${callErr.message}` });
         }
       }
       if (!calledInstead) await sendWhatsAppMessage(row.phone, textPrompt, row.clinic_id);
@@ -54,6 +56,12 @@ async function sendDueCheckinsDirectly() {
       sent += 1;
     } catch (err) {
       console.error(`Failed to send check-in for schedule ${row.schedule_id}:`, err);
+      await recordPlatformEvent({
+        source: 'queue',
+        clinicId: row.clinic_id || null,
+        message: `Check-in send failed: ${err.message}`,
+        details: { schedule_id: row.schedule_id },
+      });
     }
   }
   return { scanned: rows.length, sent };

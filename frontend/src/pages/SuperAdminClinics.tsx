@@ -328,7 +328,7 @@ function HospitalQrSheet({
 }
 
 export default function SuperAdminClinics() {
-  const { clinics, loading, refresh, selectedClinicId, setSelectedClinicId } = useClinicSwitcher();
+  const { clinics, loading, refresh } = useClinicSwitcher();
   const [addOpen, setAddOpen] = useState(false);
   const [qrClinic, setQrClinic] = useState<ClinicSummary | null>(null);
   const [bedClinic, setBedClinic] = useState<ClinicSummary | null>(null);
@@ -349,7 +349,7 @@ export default function SuperAdminClinics() {
   return (
     <AppShell
       title="Hospitals"
-      description="Every hospital on Sehat Saathi — onboard a new one, suspend one, or switch which hospital's data the rest of the console shows."
+      description="Every hospital on Sehat Saathi — onboard a new one, edit it, set up its QR and beds, or suspend it."
       actions={
         <Button onClick={() => setAddOpen(true)}>
           <PlusCircle className="mr-1.5 size-4" />
@@ -394,16 +394,8 @@ export default function SuperAdminClinics() {
             </thead>
             <tbody className="divide-y divide-border">
               {clinics.map((c) => (
-                <tr key={c.id} className={c.id === selectedClinicId ? 'bg-primary/5' : undefined}>
-                  <td className="px-5 py-3">
-                    <button
-                      onClick={() => setSelectedClinicId(c.id)}
-                      className="text-left font-medium text-foreground hover:underline"
-                      title="View this hospital's data across the rest of the console"
-                    >
-                      {c.name}
-                    </button>
-                  </td>
+                <tr key={c.id}>
+                  <td className="px-5 py-3 font-medium text-foreground">{c.name}</td>
                   <td className="px-5 py-3">
                     <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_TONE[c.status]}`}>
                       {STATUS_LABEL[c.status]}

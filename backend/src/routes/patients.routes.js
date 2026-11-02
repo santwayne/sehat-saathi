@@ -91,6 +91,10 @@ router.get('/:id', async (req, res) => {
     if (!patient) {
       return res.status(404).json({ error: 'Patient not found.' });
     }
+    // Previously unchecked: any caller could read any patient by id.
+    if (!canAccessClinic(req, patient.clinic_id)) {
+      return res.status(403).json({ error: 'Insufficient permissions.' });
+    }
 
     const [prescriptions, schedules, conversations] = await Promise.all([
       pool.query(

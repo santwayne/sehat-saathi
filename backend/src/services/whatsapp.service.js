@@ -1,12 +1,15 @@
 const axios = require('axios');
 const { pool } = require('../db');
+const { recordPlatformEvent } = require('./platform-events.service');
 
 // Fallback for single-clinic / local-dev deployments and for any clinic row
 // that hasn't had its own WABA credentials backfilled yet (see migration
 // 002's backfill note). Once a clinic has its own whatsapp_phone_number_id +
 // whatsapp_access_token in the DB, those take priority over these globals.
-const GLOBAL_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
-const GLOBAL_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+// Read at call time (not module load) so keys saved in Super Admin →
+// Integrations take effect without a restart.
+const globalToken = () => process.env.WHATSAPP_ACCESS_TOKEN;
+const globalPhoneNumberId = () => process.env.WHATSAPP_PHONE_NUMBER_ID;
 
 const GRAPH_VERSION = 'v18.0';
 
@@ -23,7 +26,7 @@ const CRED_CACHE_TTL_MS = 60_000;
  */
 async function resolveClinicCredentials(clinicId) {
   if (!clinicId) {
-    return { phoneNumberId: GLOBAL_PHONE_NUMBER_ID, accessToken: GLOBAL_TOKEN, clinicId: null };
+    return { phoneNumberId: globalPhoneNumberId(), accessToken: globalToken(), clinicId: null };
   }
 
   const cached = credCache.get(clinicId);
@@ -38,8 +41,8 @@ async function resolveClinicCredentials(clinicId) {
   const clinic = rows[0];
 
   const value = {
-    phoneNumberId: clinic?.whatsapp_phone_number_id || GLOBAL_PHONE_NUMBER_ID,
-    accessToken: clinic?.whatsapp_access_token || GLOBAL_TOKEN,
+    phoneNumberId: clinic?.whatsapp_phone_number_id || globalPhoneNumberId(),
+    accessToken: clinic?.whatsapp_access_token || globalToken(),
     clinicId,
   };
 
@@ -94,6 +97,12 @@ async function sendWhatsAppMessage(toPhone, text, clinicId) {
     return response.data;
   } catch (error) {
     console.error('Failed to send WhatsApp message:', error.response?.data || error.message);
+    await recordPlatformEvent({
+      source: 'whatsapp_send',
+      clinicId: clinicId || null,
+      message: `WhatsApp text send failed: ${error.response?.data?.error?.message || error.message}`,
+      details: { code: error.response?.data?.error?.code, status: error.response?.status },
+    });
     throw error;
   }
 }
@@ -135,6 +144,12 @@ async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyPar
     return response.data;
   } catch (error) {
     console.error('Failed to send WhatsApp template:', error.response?.data || error.message);
+    await recordPlatformEvent({
+      source: 'whatsapp_send',
+      clinicId: clinicId || null,
+      message: `WhatsApp template "${templateName}" send failed: ${error.response?.data?.error?.message || error.message}`,
+      details: { template: templateName, language: languageCode, code: error.response?.data?.error?.code, status: error.response?.status },
+    });
     throw error;
   }
 }

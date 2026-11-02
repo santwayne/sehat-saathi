@@ -95,6 +95,8 @@ async function processPrescriptionOCR(imageBase64, mediaType = 'image/jpeg') {
   } catch (err) {
     console.error('OCR API call failed:', err.message);
     return {
+      failed: true,
+      failureReason: `OCR API call failed: ${err.message}`,
       rawText: `[OCR request failed: ${err.message}]`,
       structuredData: null,
       ocrConfidence: 'low',
@@ -129,6 +131,8 @@ async function processPrescriptionOCR(imageBase64, mediaType = 'image/jpeg') {
   } catch (err) {
     // Fail-safe: parsing error defaults to low confidence requiring human review
     return {
+      failed: true,
+      failureReason: 'OCR response was not valid JSON',
       rawText: responseText,
       structuredData: null,
       ocrConfidence: 'low',

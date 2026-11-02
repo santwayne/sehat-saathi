@@ -1,6 +1,7 @@
 const { pool } = require('../db');
 const { sendWhatsAppMessage, downloadWhatsAppMedia } = require('./whatsapp.service');
 const { processPrescriptionOCR } = require('./ocr.service');
+const { recordPlatformEvent } = require('./platform-events.service');
 const { transcribeAudio } = require('./azure-speech.service');
 const { matchDoctor, logMatchAttempt, recordResolution } = require('./doctor-match.service');
 const { createEscalationFlag } = require('./escalation.service');
@@ -187,11 +188,15 @@ async function handleImageSignal({ pending, clinic, mediaId }) {
     downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
   } catch (err) {
     console.error('Enrollment: failed to download image:', err.message);
+    await recordPlatformEvent({ source: 'media', clinicId: clinic.id, message: `Enrollment document download failed: ${err.message}` });
     await notify(clinic.id, pending.phone, MESSAGES.mediaDownloadFailed);
     return;
   }
 
   const ocrResult = await processPrescriptionOCR(downloaded.base64, downloaded.mimeType);
+  if (ocrResult.failed) {
+    await recordPlatformEvent({ source: 'ocr', clinicId: clinic.id, message: `OCR failed: ${ocrResult.failureReason}` });
+  }
 
   // Save the document now (patient_id NULL is fine — see schema) so it isn't
   // lost even if doctor resolution needs another round-trip.
