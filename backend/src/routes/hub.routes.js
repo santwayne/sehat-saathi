@@ -156,7 +156,7 @@ router.post('/sso/exchange', async (req, res) => {
     // The signed-in Loopdesk user's own staff login if their email matches,
     // else the hospital's first admin.
     const { rows: [staff] } = await pool.query(
-      `SELECT id, clinic_id, name, role, phone FROM staff_users WHERE clinic_id = $1
+      `SELECT id, clinic_id, name, role, phone FROM staff_users WHERE clinic_id = $1 AND deactivated_at IS NULL
         ORDER BY (lower(email) = lower($2)) DESC, (role = 'admin') DESC, created_at ASC LIMIT 1`,
       [clinic.id, String(claims.email || '')]);
     if (!staff) return res.status(403).json({ error: 'No staff login for this hospital.' });

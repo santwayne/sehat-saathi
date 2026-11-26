@@ -19,7 +19,7 @@ router.get('/', requireRole('super_admin'), async (req, res) => {
         c.id, c.name, c.address, c.whatsapp_number, c.whatsapp_phone_number_id,
         c.status, c.records_mode, c.created_at,
         (SELECT COUNT(*) FROM patients p WHERE p.clinic_id = c.id) AS patient_count,
-        (SELECT COUNT(*) FROM doctors d WHERE d.clinic_id = c.id) AS doctor_count
+        (SELECT COUNT(*) FROM doctors d WHERE d.clinic_id = c.id AND d.removed_at IS NULL) AS doctor_count
       FROM clinics c
       ORDER BY c.created_at DESC;
     `);
@@ -147,7 +147,7 @@ router.get('/:id/summary', async (req, res) => {
         `SELECT COUNT(*) FROM prescriptions pr JOIN patients p ON pr.patient_id = p.id WHERE p.clinic_id = $1 AND pr.verified_by_staff = false`,
         [id]
       ),
-      pool.query('SELECT COUNT(*) FROM doctors WHERE clinic_id = $1', [id]),
+      pool.query('SELECT COUNT(*) FROM doctors WHERE clinic_id = $1 AND removed_at IS NULL', [id]),
     ]);
 
     return res.status(200).json({

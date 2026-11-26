@@ -32,6 +32,7 @@ interface DoctorRow {
   id: string;
   name: string;
   specialty: string | null;
+  staff_user_id?: string | null;
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -80,45 +81,20 @@ function AddStaffSheet({
     setBusy(true);
     setErr(null);
     try {
-      const res = await api.post<{ data: StaffRow }>('/api/staff', {
+      // Name / phone trimmed ("dr priya " used to be saved with the space).
+      // Role Doctor: the server also creates the linked Doctors-list record, in
+      // the same transaction, and returns it as `doctor`.
+      const res = await api.post<{ data: StaffRow; doctor?: DoctorRow | null; reactivated?: boolean }>('/api/staff', {
         clinic_id: clinicId,
-        name: form.name,
+        name: form.name.trim().replace(/\s+/g, ' '),
         role: form.role,
-        phone: form.phone,
+        phone: form.phone.trim(),
         password: form.password,
+        specialty: form.role === 'doctor' ? form.specialty.trim() || undefined : undefined,
       });
       onAdded(res.data);
-
-      // Bug 4 fix: a staff account with Role = Doctor used to be a
-      // completely separate, unlinked concept from the Doctors list that
-      // actually populates the "Assigned doctor" dropdown on patient
-      // enrollment — an admin had to separately re-enter the same person
-      // under Settings → Doctors with a different (specialty-only) form,
-      // and the two records had no link back to each other at all. The
-      // backend already supported linking via doctors.staff_user_id /
-      // POST /api/doctors' staff_user_id field — nothing on the frontend
-      // ever called it. Now it does, automatically, right after the staff
-      // account is created.
-      if (form.role === 'doctor') {
-        try {
-          const docRes = await api.post<{ data: DoctorRow }>('/api/doctors', {
-            clinic_id: clinicId,
-            name: form.name,
-            specialty: form.specialty || undefined,
-            staff_user_id: res.data.id,
-          });
-          onDoctorAdded(docRes.data);
-        } catch (docErr) {
-          // The staff login itself was created successfully — don't fail
-          // the whole flow over the linked Doctors-list entry. Surface it
-          // so the admin knows to add it manually via "Add doctor" instead.
-          toast.error(
-            docErr instanceof Error
-              ? `Staff account created, but adding "${form.name}" to the Doctors list failed: ${docErr.message}`
-              : 'Staff account created, but adding to the Doctors list failed — add manually via "Add doctor".',
-          );
-        }
-      }
+      if (res.doctor) onDoctorAdded(res.doctor);
+      if (res.reactivated) toast.success(`${res.data.name} was removed earlier — their account is active again with the new details.`);
 
       setForm(emptyStaff);
       onOpenChange(false);
@@ -234,8 +210,8 @@ function AddDoctorSheet({
     try {
       const res = await api.post<{ data: DoctorRow }>('/api/doctors', {
         clinic_id: clinicId,
-        name: form.name,
-        specialty: form.specialty || undefined,
+        name: form.name.trim().replace(/\s+/g, ' '),
+        specialty: form.specialty.trim() || undefined,
       });
       onAdded(res.data);
       setForm(emptyDoctor);
@@ -285,54 +261,139 @@ function AddDoctorSheet({
   );
 }
 
-// Related gap fix: no delete existed anywhere for a doctor record. A patient
-// assigned to the deleted doctor keeps their own record — DELETE
-// /api/doctors/:id relies on the existing ON DELETE SET NULL foreign key,
-// they just show as unassigned afterward.
-function DeleteDoctorButton({ doctor, onDeleted }: { doctor: DoctorRow; onDeleted: (id: string) => void }) {
+interface RemovalPreview {
+  staff: { id: string; name: string; role: string; phone: string } | null;
+  doctors: { id: string; name: string; specialty: string | null }[];
+  patient_count: number;
+  reassign_options: { id: string; name: string; specialty: string | null }[];
+}
+interface RemovalResult {
+  staff: { id: string; name: string } | null;
+  doctors_removed: string[];
+  patients_moved: number;
+  patients_assigned_to: string | null;
+}
+
+/**
+ * Remove a staff member or a doctor. One action: the staff login is
+ * deactivated (cannot sign in; kept for the audit log) and the linked doctor
+ * record is retired. If the doctor has patients, the admin picks who takes
+ * them over, or leaves them unassigned.
+ *   kind "staff"  → GET /api/staff/:id/removal,   DELETE /api/staff/:id
+ *   kind "doctor" → GET /api/doctors/:id/removal, DELETE /api/doctors/:id
+ */
+function RemoveButton({
+  kind,
+  id,
+  name,
+  label,
+  onRemoved,
+}: {
+  kind: 'staff' | 'doctor';
+  id: string;
+  name: string;
+  label?: string;
+  onRemoved: (r: RemovalResult) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<RemovalPreview | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [target, setTarget] = useState<string>('');
+  const base = kind === 'staff' ? '/api/staff' : '/api/doctors';
+
+  async function start() {
+    setOpen(true);
+    setPreview(null);
+    setLoadErr(null);
+    setTarget('');
+    try {
+      const r = await api.get<{ data: RemovalPreview }>(`${base}/${id}/removal`);
+      setPreview(r.data);
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : 'Could not load details');
+    }
+  }
 
   async function remove() {
     setBusy(true);
     try {
-      await api.delete(`/api/doctors/${doctor.id}`);
+      const q = target ? `?reassign_to=${encodeURIComponent(target)}` : '';
+      const r = await api.delete<{ data: RemovalResult }>(`${base}/${id}${q}`);
       setOpen(false);
-      onDeleted(doctor.id);
-      toast.success(`${doctor.name} removed`);
+      onRemoved(r.data);
+      const moved = r.data.patients_moved
+        ? ` ${r.data.patients_moved} patient(s) ${r.data.patients_assigned_to ? `moved to ${r.data.patients_assigned_to}` : 'left unassigned'}.`
+        : '';
+      toast.success(`${name} removed.${moved}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete doctor');
+      toast.error(e instanceof Error ? e.message : 'Failed to remove');
     } finally {
       setBusy(false);
     }
   }
 
+  const hasLogin = !!preview?.staff;
+  const hasDoctor = !!preview?.doctors.length;
+
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        aria-label={`Delete ${doctor.name}`}
-        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-      >
-        <Trash2 className="size-3.5" />
-      </button>
+      {label ? (
+        <Button size="sm" variant="outline" onClick={() => void start()} className="text-destructive hover:bg-destructive/10 hover:text-destructive">
+          <Trash2 className="mr-1.5 size-3.5" />
+          {label}
+        </Button>
+      ) : (
+        <button
+          onClick={() => void start()}
+          aria-label={`Remove ${name}`}
+          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      )}
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {doctor.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Any patient currently assigned to {doctor.name} keeps their own record — they'll just show
-              as unassigned afterward. This cannot be undone.
+            <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                {loadErr ? <p className="text-destructive">{loadErr}</p> : !preview ? <p>Checking…</p> : (
+                  <ul className="list-disc space-y-1 pl-5">
+                    {hasLogin && <li>Their login ({preview.staff!.phone}) is <b>deactivated</b>: they can no longer sign in. The account is kept so the audit log stays complete.</li>}
+                    {hasDoctor && <li>They are removed from the <b>Doctors list</b> and patient assignment.</li>}
+                    {preview.patient_count === 0 && hasDoctor && <li>No patients are assigned to them.</li>}
+                  </ul>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {preview && preview.patient_count > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor={`reassign-${id}`}>
+                {preview.patient_count} patient{preview.patient_count === 1 ? ' is' : 's are'} assigned to {name}. Who should take over?
+              </Label>
+              <select
+                id={`reassign-${id}`}
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="">Leave unassigned (assign later from Patients)</option>
+                {preview.reassign_options.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}{d.specialty ? ` · ${d.specialty}` : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => { e.preventDefault(); void remove(); }}
-              disabled={busy}
+              disabled={busy || !preview}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {busy ? 'Removing…' : 'Remove doctor'}
+              {busy ? 'Removing…' : 'Remove'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -466,7 +527,8 @@ export default function Settings() {
                       <tr>
                         <th className="pb-2 pr-6 font-medium">Name</th>
                         <th className="pb-2 pr-6 font-medium">Role</th>
-                        <th className="pb-2 font-medium">Phone</th>
+                        <th className="pb-2 pr-6 font-medium">Phone</th>
+                        <th className="pb-2 font-medium" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -476,7 +538,22 @@ export default function Settings() {
                           <td className="py-2.5 pr-6 capitalize text-muted-foreground">
                             {ROLE_LABEL[s.role] ?? s.role}
                           </td>
-                          <td className="py-2.5 font-mono text-xs text-muted-foreground">{s.phone}</td>
+                          <td className="py-2.5 pr-6 font-mono text-xs text-muted-foreground">{s.phone}</td>
+                          <td className="py-2.5 text-right">
+                            {s.id !== staff?.id && (
+                              <RemoveButton
+                                kind="staff"
+                                id={s.id}
+                                name={s.name}
+                                label="Remove"
+                                onRemoved={() => {
+                                  // The login and its doctor record go together.
+                                  setStaffList((prev) => prev?.filter((row) => row.id !== s.id) ?? prev);
+                                  setDoctors((prev) => prev?.filter((row) => row.staff_user_id !== s.id) ?? prev);
+                                }}
+                              />
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -513,9 +590,15 @@ export default function Settings() {
                           <td className="py-2.5 pr-6 font-medium text-foreground">{d.name}</td>
                           <td className="py-2.5 pr-6 text-muted-foreground">{d.specialty ?? '—'}</td>
                           <td className="py-2.5 text-right">
-                            <DeleteDoctorButton
-                              doctor={d}
-                              onDeleted={(id) => setDoctors((prev) => prev?.filter((row) => row.id !== id) ?? prev)}
+                            <RemoveButton
+                              kind="doctor"
+                              id={d.id}
+                              name={d.name}
+                              onRemoved={(r) => {
+                                setDoctors((prev) => prev?.filter((row) => row.id !== d.id) ?? prev);
+                                // A doctor with a login: that login was deactivated too.
+                                if (r.staff) setStaffList((prev) => prev?.filter((row) => row.id !== r.staff!.id) ?? prev);
+                              }}
                             />
                           </td>
                         </tr>

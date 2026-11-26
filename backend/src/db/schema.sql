@@ -540,3 +540,9 @@ CREATE TABLE IF NOT EXISTS hub_token_uses (
   purpose VARCHAR(30) NOT NULL,
   used_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+
+-- 010: staff removal (deactivate login, retire doctor record) — see migrations/010_staff_removal.sql
+ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS deactivated_by UUID REFERENCES staff_users(id) ON DELETE SET NULL;
+ALTER TABLE doctors ADD COLUMN IF NOT EXISTS removed_at TIMESTAMP WITH TIME ZONE;
+CREATE INDEX IF NOT EXISTS doctors_staff_user_active_idx ON doctors (staff_user_id) WHERE removed_at IS NULL;
