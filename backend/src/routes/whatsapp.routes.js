@@ -71,223 +71,7 @@ router.post('/webhook', async (req, res) => {
       return;
     }
 
-    const senderPhone = normalizePhone(message.from);
-    const messageType = message.type;
-
-    // "Without patient records" plan: nothing about the sender is stored —
-    // no enrolment, no conversation log, no documents. They get one fixed
-    // reply pointing them to the hospital, and the message is dropped.
-    if (clinic.records_mode === 'without_records') {
-      await sendWhatsAppMessage(
-        senderPhone,
-        `Thank you for messaging ${clinic.name}. This number does not keep patient records or handle medical questions — please contact the hospital directly.\n\n${clinic.name} को संदेश भेजने के लिए धन्यवाद। यह नंबर मरीज़ों का रिकॉर्ड नहीं रखता — कृपया सीधे अस्पताल से संपर्क करें।`,
-        clinic.id
-      ).catch((err) => console.error('No-records auto-reply failed:', err.message));
-      return;
-    }
-
-    // Scoped to this clinic (B5 fix): without this, a phone number enrolled
-    // at two different clinics would be ambiguous — not possible today with
-    // one deployment, but very possible now that multiple hospitals share
-    // this one webhook.
-    const patientRes = await pool.query(
-      'SELECT id, language_pref, kill_switch_active, assigned_doctor_id, consent_given, bed_id, followup_opt_out FROM patients WHERE phone = $1 AND clinic_id = $2',
-      [senderPhone, clinic.id]
-    );
-    const patient = patientRes.rows[0];
-
-    // QR self-enrollment (QR_SELF_ENROLLMENT_BUILD_SPEC.md, Section 3): an
-    // unrecognized sender is no longer silently ignored — they've scanned
-    // the hospital's QR and are starting (or continuing) self-enrollment.
-    if (!patient) {
-      // Family accounts (V2 spec Section 2): an invited/active family
-      // member's number is checked before treating the sender as a new patient.
-      const handledAsFamily = await handleFamilyMessage({ clinicId: clinic.id, senderPhone, messageType, message });
-      if (handledAsFamily) return;
-
-      await handleSelfEnrollment({ clinicId: clinic.id, senderPhone, messageType, message });
-      return;
-    }
-
-    // Defense-in-depth for Bug 5: enrollment now requires consent_given
-    // (both the staff-form path and the new self-enrollment path above), so
-    // this should be unreachable for any newly-enrolled patient — kept as a
-    // second gate in case a pre-existing row without consent is still in the DB.
-    if (!patient.consent_given) {
-      console.log(`Message from ${senderPhone} ignored: consent not on file.`);
-      return;
-    }
-
-    // STOP: opt out of follow-up-visit contact (Regulars). Care messages are
-    // not touched here — stopping those remains a staff decision.
-    if (messageType === 'text' && STOP_WORDS.test(message.text?.body || '')) {
-      if (!patient.followup_opt_out) {
-        await pool.query('UPDATE patients SET followup_opt_out = true, followup_opt_out_at = NOW() WHERE id = $1', [patient.id]);
-        await regulars.onPatientOptOut({ id: patient.id, clinic_id: clinic.id, phone: senderPhone });
-      }
-      await sendWhatsAppMessage(
-        senderPhone,
-        "Done — you won't be contacted about follow-up visits. Your treatment reminders continue; to stop those too, please tell the hospital.\n\n" +
-          'हो गया — फ़ॉलो-अप विज़िट के लिए अब आपसे संपर्क नहीं किया जाएगा। इलाज के रिमाइंडर जारी रहेंगे; उन्हें भी बंद करने के लिए अस्पताल को बताएं।',
-        clinic.id
-      ).catch((err) => console.error('STOP confirmation failed:', err.message));
-      return;
-    }
-
-    if (patient.kill_switch_active) {
-      console.log(`Message from ${senderPhone} ignored: kill switch active.`);
-      return;
-    }
-
-    // An enrolled patient scanning a (new) bed QR just updates their bed —
-    // it must not reach the conversation engine as a question.
-    if (messageType === 'text') {
-      const bedCode = extractBedCode(message.text?.body);
-      if (bedCode) {
-        const bed = await findBedByCode(clinic.id, bedCode);
-        if (bed) {
-          await pool.query('UPDATE patients SET bed_id = $1 WHERE id = $2', [bed.id, patient.id]);
-          await sendWhatsAppMessage(senderPhone, `Thank you — your bed is now recorded as ${bed.label}.`, clinic.id);
-          return;
-        }
-      }
-    }
-
-    // Handle incoming image (prescription/lab report photo)
-    if (messageType === 'image') {
-      const inboundConversationId = await logConversation(patient.id, 'inbound', '[Document photo received]', 'prescription_image');
-
-      const mediaId = message.image.id;
-      let downloaded;
-      try {
-        downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
-      } catch (err) {
-        // Media download can fail independently of OCR (expired token, media
-        // ID no longer valid, network error) — image_url is NOT NULL on
-        // prescriptions, so there's no row we can safely insert here. Raise
-        // a flag instead so staff know a photo arrived and needs manual
-        // follow-up, rather than the message vanishing with only a server
-        // log line no one will see.
-        console.error('Failed to download WhatsApp media:', err.message);
-        await recordPlatformEvent({ source: 'media', clinicId: clinic.id, message: `Document photo download failed: ${err.message}` });
-        await createEscalationFlag({
-          patientId: patient.id,
-          conversationId: inboundConversationId,
-          flagType: 'ocr_low_confidence',
-          priority: 'normal',
-          assignedDoctorId: patient.assigned_doctor_id,
-          reason: `Document photo received but could not be downloaded from WhatsApp: ${err.message}`,
-        });
-        await sendWhatsAppMessage(
-          senderPhone,
-          'Thank you. We received your image but had trouble processing it — our team has been notified and will follow up.',
-          clinic.id
-        );
-        return;
-      }
-      const { base64, mimeType, mediaUrl } = downloaded;
-
-      // Trigger OCR service — never throws now (see ocr.service.js), always
-      // returns a safe fail-safe result on failure, so no separate
-      // try/catch is needed here.
-      const ocrResult = await processPrescriptionOCR(base64, mimeType);
-      if (ocrResult.failed) {
-        await recordPlatformEvent({ source: 'ocr', clinicId: clinic.id, message: `OCR failed: ${ocrResult.failureReason}` });
-      }
-
-      // Persist immediately with verified_by_staff = false — nothing derived from this
-      // reaches the patient until staff verify it (Section 4.1, step 3).
-      const insertedRes = await pool.query(
-        `INSERT INTO prescriptions (patient_id, document_type, image_url, ocr_raw_text, structured_json, ocr_confidence, verified_by_staff)
-         VALUES ($1, $2, $3, $4, $5, $6, false) RETURNING id`,
-        [patient.id, ocrResult.documentType, mediaUrl, ocrResult.rawText, ocrResult.structuredData, ocrResult.ocrConfidence]
-      );
-
-      // Doctor re-identification for an already-enrolled patient (Section
-      // 4.4 / Section 7): a fresh document can update assigned_doctor_id if
-      // the patient wasn't assigned yet, but a confident match to a
-      // *different* doctor than the one already on file never silently
-      // overwrites it — staff confirm which is correct instead.
-      if (ocrResult.doctorName && ocrResult.doctorNameConfidence !== 'low') {
-        const match = await matchDoctor({ clinicId: clinic.id, rawInput: ocrResult.doctorName });
-        await logMatchAttempt({
-          clinicId: clinic.id,
-          patientId: patient.id,
-          source: 'ocr',
-          rawInput: ocrResult.doctorName,
-          matchedDoctorId: match.candidate?.id,
-          matchConfidence: match.status === 'no_match' ? null : (match.status === 'high_confidence' ? 'high' : 'low'),
-        });
-
-        if (match.status === 'high_confidence') {
-          if (!patient.assigned_doctor_id) {
-            await pool.query('UPDATE patients SET assigned_doctor_id = $1 WHERE id = $2', [match.candidate.id, patient.id]);
-            await pool.query('UPDATE prescriptions SET doctor_id = $1 WHERE id = $2', [match.candidate.id, insertedRes.rows[0].id]);
-          } else if (match.candidate.id !== patient.assigned_doctor_id) {
-            await createEscalationFlag({
-              patientId: patient.id,
-              conversationId: inboundConversationId,
-              flagType: 'doctor_match_conflict',
-              priority: 'normal',
-              assignedDoctorId: patient.assigned_doctor_id,
-              reason: `New document names ${match.candidate.name}, but this patient is currently assigned to a different doctor. Please confirm which is correct.`,
-            });
-          }
-        }
-      }
-
-      await sendWhatsAppMessage(
-        senderPhone,
-        'Thank you. We have received your image. Our team is reviewing it to ensure complete accuracy.',
-        clinic.id
-      );
-    }
-    // Handle incoming voice note
-    else if (messageType === 'audio') {
-      await logConversation(patient.id, 'inbound', '[Voice note received]', 'other');
-
-      const mediaId = message.audio.id;
-      let downloaded;
-      try {
-        downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
-      } catch (err) {
-        console.error('Failed to download WhatsApp voice note:', err.message);
-        await recordPlatformEvent({ source: 'media', clinicId: clinic.id, message: `Voice note download failed: ${err.message}` });
-        await sendWhatsAppMessage(senderPhone, 'Thank you. We received your voice note but had trouble processing it — please try again.', clinic.id);
-        return;
-      }
-
-      const { transcript } = await transcribeAudio(
-        Buffer.from(downloaded.base64, 'base64'),
-        downloaded.mimeType,
-        patient.language_pref
-      );
-
-      if (!transcript) {
-        await sendWhatsAppMessage(senderPhone, "Sorry, we couldn't quite make that out. Could you send it as a text message instead?", clinic.id);
-        return;
-      }
-
-      await logConversation(patient.id, 'inbound', `[Voice transcript] ${transcript}`, 'other');
-
-      // Route the transcript through the same conversation engine as a text
-      // message — an already-enrolled patient's voice note is most often a
-      // question or check-in response, same handling either way.
-      const result = await processInboundMessage(patient.id, transcript);
-      if (result && result.replyText) {
-        await sendWhatsAppMessage(senderPhone, result.replyText, clinic.id);
-      }
-    }
-    // Handle incoming text (questions / check-in responses)
-    else if (messageType === 'text') {
-      const textContent = message.text.body;
-
-      // Pass to Conversation Engine handler, scoped to this patient's own record
-      const result = await processInboundMessage(patient.id, textContent);
-      if (result && result.replyText) {
-        await sendWhatsAppMessage(senderPhone, result.replyText, clinic.id);
-      }
-    }
+    await handleClinicMessage(clinic, message);
   } catch (error) {
     console.error('Error handling webhook payload:', error);
     await recordPlatformEvent({
@@ -298,4 +82,232 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
+/**
+ * Handles one inbound WhatsApp message for a known, non-suspended hospital.
+ * Used by the Meta webhook (hospital's own number) and by Loopdesk's forward
+ * (POST /api/hub/whatsapp/inbound, hospital's number lives in Loopdesk) — so a
+ * message is treated exactly the same whichever way it arrived.
+ * `message` is a WhatsApp Cloud API message object ({ from, id, type, text|image|audio|document… }).
+ */
+async function handleClinicMessage(clinic, message) {
+  const senderPhone = normalizePhone(message.from);
+  const messageType = message.type;
+
+  // "Without patient records" plan: nothing about the sender is stored —
+  // no enrolment, no conversation log, no documents. They get one fixed
+  // reply pointing them to the hospital, and the message is dropped.
+  if (clinic.records_mode === 'without_records') {
+    await sendWhatsAppMessage(
+      senderPhone,
+      `Thank you for messaging ${clinic.name}. This number does not keep patient records or handle medical questions — please contact the hospital directly.\n\n${clinic.name} को संदेश भेजने के लिए धन्यवाद। यह नंबर मरीज़ों का रिकॉर्ड नहीं रखता — कृपया सीधे अस्पताल से संपर्क करें।`,
+      clinic.id
+    ).catch((err) => console.error('No-records auto-reply failed:', err.message));
+    return;
+  }
+
+  // Scoped to this clinic (B5 fix): without this, a phone number enrolled
+  // at two different clinics would be ambiguous — not possible today with
+  // one deployment, but very possible now that multiple hospitals share
+  // this one webhook.
+  const patientRes = await pool.query(
+    'SELECT id, language_pref, kill_switch_active, assigned_doctor_id, consent_given, bed_id, followup_opt_out FROM patients WHERE phone = $1 AND clinic_id = $2',
+    [senderPhone, clinic.id]
+  );
+  const patient = patientRes.rows[0];
+
+  // QR self-enrollment (QR_SELF_ENROLLMENT_BUILD_SPEC.md, Section 3): an
+  // unrecognized sender is no longer silently ignored — they've scanned
+  // the hospital's QR and are starting (or continuing) self-enrollment.
+  if (!patient) {
+    // Family accounts (V2 spec Section 2): an invited/active family
+    // member's number is checked before treating the sender as a new patient.
+    const handledAsFamily = await handleFamilyMessage({ clinicId: clinic.id, senderPhone, messageType, message });
+    if (handledAsFamily) return;
+
+    await handleSelfEnrollment({ clinicId: clinic.id, senderPhone, messageType, message });
+    return;
+  }
+
+  // Defense-in-depth for Bug 5: enrollment now requires consent_given
+  // (both the staff-form path and the new self-enrollment path above), so
+  // this should be unreachable for any newly-enrolled patient — kept as a
+  // second gate in case a pre-existing row without consent is still in the DB.
+  if (!patient.consent_given) {
+    console.log(`Message from ${senderPhone} ignored: consent not on file.`);
+    return;
+  }
+
+  // STOP: opt out of follow-up-visit contact (Regulars). Care messages are
+  // not touched here — stopping those remains a staff decision.
+  if (messageType === 'text' && STOP_WORDS.test(message.text?.body || '')) {
+    if (!patient.followup_opt_out) {
+      await pool.query('UPDATE patients SET followup_opt_out = true, followup_opt_out_at = NOW() WHERE id = $1', [patient.id]);
+      await regulars.onPatientOptOut({ id: patient.id, clinic_id: clinic.id, phone: senderPhone });
+    }
+    await sendWhatsAppMessage(
+      senderPhone,
+      "Done — you won't be contacted about follow-up visits. Your treatment reminders continue; to stop those too, please tell the hospital.\n\n" +
+        'हो गया — फ़ॉलो-अप विज़िट के लिए अब आपसे संपर्क नहीं किया जाएगा। इलाज के रिमाइंडर जारी रहेंगे; उन्हें भी बंद करने के लिए अस्पताल को बताएं।',
+      clinic.id
+    ).catch((err) => console.error('STOP confirmation failed:', err.message));
+    return;
+  }
+
+  if (patient.kill_switch_active) {
+    console.log(`Message from ${senderPhone} ignored: kill switch active.`);
+    return;
+  }
+
+  // An enrolled patient scanning a (new) bed QR just updates their bed —
+  // it must not reach the conversation engine as a question.
+  if (messageType === 'text') {
+    const bedCode = extractBedCode(message.text?.body);
+    if (bedCode) {
+      const bed = await findBedByCode(clinic.id, bedCode);
+      if (bed) {
+        await pool.query('UPDATE patients SET bed_id = $1 WHERE id = $2', [bed.id, patient.id]);
+        await sendWhatsAppMessage(senderPhone, `Thank you — your bed is now recorded as ${bed.label}.`, clinic.id);
+        return;
+      }
+    }
+  }
+
+  // Handle incoming image (prescription/lab report photo)
+  if (messageType === 'image') {
+    const inboundConversationId = await logConversation(patient.id, 'inbound', '[Document photo received]', 'prescription_image');
+
+    const mediaId = message.image.id;
+    let downloaded;
+    try {
+      downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
+    } catch (err) {
+      // Media download can fail independently of OCR (expired token, media
+      // ID no longer valid, network error) — image_url is NOT NULL on
+      // prescriptions, so there's no row we can safely insert here. Raise
+      // a flag instead so staff know a photo arrived and needs manual
+      // follow-up, rather than the message vanishing with only a server
+      // log line no one will see.
+      console.error('Failed to download WhatsApp media:', err.message);
+      await recordPlatformEvent({ source: 'media', clinicId: clinic.id, message: `Document photo download failed: ${err.message}` });
+      await createEscalationFlag({
+        patientId: patient.id,
+        conversationId: inboundConversationId,
+        flagType: 'ocr_low_confidence',
+        priority: 'normal',
+        assignedDoctorId: patient.assigned_doctor_id,
+        reason: `Document photo received but could not be downloaded from WhatsApp: ${err.message}`,
+      });
+      await sendWhatsAppMessage(
+        senderPhone,
+        'Thank you. We received your image but had trouble processing it — our team has been notified and will follow up.',
+        clinic.id
+      );
+      return;
+    }
+    const { base64, mimeType, mediaUrl } = downloaded;
+
+    // Trigger OCR service — never throws now (see ocr.service.js), always
+    // returns a safe fail-safe result on failure, so no separate
+    // try/catch is needed here.
+    const ocrResult = await processPrescriptionOCR(base64, mimeType);
+    if (ocrResult.failed) {
+      await recordPlatformEvent({ source: 'ocr', clinicId: clinic.id, message: `OCR failed: ${ocrResult.failureReason}` });
+    }
+
+    // Persist immediately with verified_by_staff = false — nothing derived from this
+    // reaches the patient until staff verify it (Section 4.1, step 3).
+    const insertedRes = await pool.query(
+      `INSERT INTO prescriptions (patient_id, document_type, image_url, ocr_raw_text, structured_json, ocr_confidence, verified_by_staff)
+       VALUES ($1, $2, $3, $4, $5, $6, false) RETURNING id`,
+      [patient.id, ocrResult.documentType, mediaUrl, ocrResult.rawText, ocrResult.structuredData, ocrResult.ocrConfidence]
+    );
+
+    // Doctor re-identification for an already-enrolled patient (Section
+    // 4.4 / Section 7): a fresh document can update assigned_doctor_id if
+    // the patient wasn't assigned yet, but a confident match to a
+    // *different* doctor than the one already on file never silently
+    // overwrites it — staff confirm which is correct instead.
+    if (ocrResult.doctorName && ocrResult.doctorNameConfidence !== 'low') {
+      const match = await matchDoctor({ clinicId: clinic.id, rawInput: ocrResult.doctorName });
+      await logMatchAttempt({
+        clinicId: clinic.id,
+        patientId: patient.id,
+        source: 'ocr',
+        rawInput: ocrResult.doctorName,
+        matchedDoctorId: match.candidate?.id,
+        matchConfidence: match.status === 'no_match' ? null : (match.status === 'high_confidence' ? 'high' : 'low'),
+      });
+
+      if (match.status === 'high_confidence') {
+        if (!patient.assigned_doctor_id) {
+          await pool.query('UPDATE patients SET assigned_doctor_id = $1 WHERE id = $2', [match.candidate.id, patient.id]);
+          await pool.query('UPDATE prescriptions SET doctor_id = $1 WHERE id = $2', [match.candidate.id, insertedRes.rows[0].id]);
+        } else if (match.candidate.id !== patient.assigned_doctor_id) {
+          await createEscalationFlag({
+            patientId: patient.id,
+            conversationId: inboundConversationId,
+            flagType: 'doctor_match_conflict',
+            priority: 'normal',
+            assignedDoctorId: patient.assigned_doctor_id,
+            reason: `New document names ${match.candidate.name}, but this patient is currently assigned to a different doctor. Please confirm which is correct.`,
+          });
+        }
+      }
+    }
+
+    await sendWhatsAppMessage(
+      senderPhone,
+      'Thank you. We have received your image. Our team is reviewing it to ensure complete accuracy.',
+      clinic.id
+    );
+  }
+  // Handle incoming voice note
+  else if (messageType === 'audio') {
+    await logConversation(patient.id, 'inbound', '[Voice note received]', 'other');
+
+    const mediaId = message.audio.id;
+    let downloaded;
+    try {
+      downloaded = await downloadWhatsAppMedia(mediaId, clinic.id);
+    } catch (err) {
+      console.error('Failed to download WhatsApp voice note:', err.message);
+      await recordPlatformEvent({ source: 'media', clinicId: clinic.id, message: `Voice note download failed: ${err.message}` });
+      await sendWhatsAppMessage(senderPhone, 'Thank you. We received your voice note but had trouble processing it — please try again.', clinic.id);
+      return;
+    }
+
+    const { transcript } = await transcribeAudio(
+      Buffer.from(downloaded.base64, 'base64'),
+      downloaded.mimeType,
+      patient.language_pref
+    );
+
+    if (!transcript) {
+      await sendWhatsAppMessage(senderPhone, "Sorry, we couldn't quite make that out. Could you send it as a text message instead?", clinic.id);
+      return;
+    }
+
+    await logConversation(patient.id, 'inbound', `[Voice transcript] ${transcript}`, 'other');
+
+    // Route the transcript through the same conversation engine as a text
+    // message — an already-enrolled patient's voice note is most often a
+    // question or check-in response, same handling either way.
+    const result = await processInboundMessage(patient.id, transcript);
+    if (result && result.replyText) {
+      await sendWhatsAppMessage(senderPhone, result.replyText, clinic.id);
+    }
+  }
+  // Handle incoming text (questions / check-in responses)
+  else if (messageType === 'text') {
+    const textContent = message.text.body;
+
+    // Pass to Conversation Engine handler, scoped to this patient's own record
+    const result = await processInboundMessage(patient.id, textContent);
+    if (result && result.replyText) {
+      await sendWhatsAppMessage(senderPhone, result.replyText, clinic.id);
+    }
+  }
+}
+
 module.exports = router;
+module.exports.handleClinicMessage = handleClinicMessage;

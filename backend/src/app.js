@@ -18,6 +18,7 @@ const pharmacyRoutes = require('./routes/pharmacy.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const voiceRoutes = require('./routes/voice.routes');
 const adminRoutes = require('./routes/admin.routes');
+const hubRoutes = require('./routes/hub.routes');
 const { patientRecordsGuard } = require('./services/records-access.service');
 const { ensureIntegrationsLoaded } = require('./services/integrations.service');
 
@@ -51,6 +52,8 @@ app.use('/api/beds', bedRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/admin', adminRoutes);
+// Loopdesk hub: provision, single sign-on, WhatsApp forwarded from the hospital's Loopdesk number.
+app.use('/api/hub', hubRoutes);
 // /api/pharmacy-partners and /api/refill-orders
 app.use('/api', pharmacyRoutes);
 // Cron-triggered endpoints (Vercel Cron hits these — see vercel.json). On AWS,

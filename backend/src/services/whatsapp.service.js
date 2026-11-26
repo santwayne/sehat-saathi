@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { pool } = require('../db');
 const { recordPlatformEvent } = require('./platform-events.service');
+const hub = require('./hub.service');
 
 // Fallback for single-clinic / local-dev deployments and for any clinic row
 // that hasn't had its own WABA credentials backfilled yet (see migration
@@ -76,6 +77,14 @@ function isValidPhone(digitsOnly) {
  * send from — omit only for legacy/single-clinic call sites still being migrated.
  */
 async function sendWhatsAppMessage(toPhone, text, clinicId) {
+  // Loopdesk hospital: its WhatsApp number lives in Loopdesk.
+  const hubId = await hub.hubWhatsAppRoute(clinicId);
+  if (hubId) {
+    return hub.hubSend(hubId, normalizePhone(toPhone), { type: 'text', text: { body: text } }).catch(async (error) => {
+      await recordPlatformEvent({ source: 'whatsapp_send', clinicId, message: error.message, details: { via: 'loopdesk' } });
+      throw error;
+    });
+  }
   const { phoneNumberId, accessToken } = await resolveClinicCredentials(clinicId);
   try {
     const response = await axios.post(
@@ -116,10 +125,20 @@ async function sendWhatsAppMessage(toPhone, text, clinicId) {
  * @param {string} [clinicId] - which hospital's WABA number/token to send from
  */
 async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyParams = [], clinicId) {
-  const { phoneNumberId, accessToken } = await resolveClinicCredentials(clinicId);
   const components = bodyParams.length > 0
     ? [{ type: 'body', parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })) }]
     : [];
+  // Loopdesk hospital: the template must be approved in Loopdesk's Meta account
+  // under the same name (see README → Loopdesk).
+  const hubId = await hub.hubWhatsAppRoute(clinicId);
+  if (hubId) {
+    return hub.hubSend(hubId, normalizePhone(toPhone), { type: 'template', template: { name: templateName, language: { code: languageCode }, components } })
+      .catch(async (error) => {
+        await recordPlatformEvent({ source: 'whatsapp_send', clinicId, message: `Template "${templateName}": ${error.message}`, details: { via: 'loopdesk', template: templateName } });
+        throw error;
+      });
+  }
+  const { phoneNumberId, accessToken } = await resolveClinicCredentials(clinicId);
 
   try {
     const response = await axios.post(
@@ -163,8 +182,14 @@ async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyPar
  * own catalog elsewhere cannot be opened from this number.
  */
 async function sendCatalogMessage(toPhone, bodyText, clinicId, thumbnailProductRetailerId) {
-  const { phoneNumberId, accessToken } = await resolveClinicCredentials(clinicId);
   const parameters = thumbnailProductRetailerId ? { thumbnail_product_retailer_id: thumbnailProductRetailerId } : {};
+  const hubId = await hub.hubWhatsAppRoute(clinicId);
+  if (hubId) {
+    return hub.hubSend(hubId, normalizePhone(toPhone), {
+      type: 'interactive', interactive: { type: 'catalog_message', body: { text: bodyText }, action: { name: 'catalog_message', parameters } },
+    });
+  }
+  const { phoneNumberId, accessToken } = await resolveClinicCredentials(clinicId);
   try {
     const response = await axios.post(
       apiUrlFor(phoneNumberId),
@@ -209,6 +234,9 @@ async function sendTemplateWithTextFallback(toPhone, templateName, languageCode,
  * the WABA number it was received on, not necessarily the global default.
  */
 async function downloadWhatsAppMedia(mediaId, clinicId) {
+  // Media sent to a Loopdesk hospital belongs to Loopdesk's WABA.
+  const hubId = await hub.hubWhatsAppRoute(clinicId);
+  if (hubId) return hub.hubMedia(hubId, mediaId);
   const { accessToken } = await resolveClinicCredentials(clinicId);
 
   const mediaRes = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {

@@ -92,4 +92,14 @@ async function placeCheckinCall(patient) {
   return data.sid;
 }
 
-module.exports = { isConfigured, validTwilioSignature, xmlEscape, say, twiml, checkinTwiml, sayAndHangup, placeCheckinCall };
+/**
+ * Loopdesk bundle rule: a hospital made by Loopdesk only gets voice calls when
+ * WayneRing is in its package; otherwise check-ins stay on WhatsApp. Hospitals
+ * made by hand are unaffected.
+ */
+async function allowedForClinic(clinicId) {
+  const { hubInfoFor, voiceAllowed } = require('./hub.service');
+  return voiceAllowed(await hubInfoFor(clinicId));
+}
+
+module.exports = { isConfigured, allowedForClinic, validTwilioSignature, xmlEscape, say, twiml, checkinTwiml, sayAndHangup, placeCheckinCall };

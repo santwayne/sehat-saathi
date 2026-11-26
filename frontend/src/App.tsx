@@ -5,6 +5,7 @@ import { useAuth } from './context/AuthContext';
 import { ClinicProvider } from './context/ClinicContext';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import HubSso from './pages/HubSso';
 import Dashboard from './pages/Dashboard';
 import Flags from './pages/Flags';
 import Prescriptions from './pages/Prescriptions';
@@ -75,6 +76,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/sso" element={<HubSso />} />
           {staffRoutes.map(([path, Page, records]) => (
             <Route
               key={path}

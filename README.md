@@ -191,3 +191,9 @@ Apply `src/db/migrations/008_followup_opt_out.sql`.
 - For hospitals connected to Regulars, the WhatsApp consent step now tells the patient (English + Hindi) that the hospital may contact them about follow-up visits using only phone, first name and visit dates, and that they can reply STOP anytime. Hospitals not connected to Regulars see the old text. The staff enrolment form's consent checkbox carries the same note.
 - An enrolled patient replying exactly STOP / unsubscribe / band karo / mat bhejo / बंद / ਬੰਦ sets `patients.followup_opt_out`, sends `OPT_OUT` to Regulars, cancels anything still queued for them, and gets a confirmation. Treatment check-ins and reminders continue — stopping those stays a staff decision (kill switch). A sentence that merely contains "stop" is not treated as an opt-out.
 - Opted-out patients are never sent to Regulars again (enrolment, verified visits, backfill).
+
+## Loopdesk hospital package (Nov 2026)
+
+Sehat Saathi can be sold as a Loopdesk package for hospitals: Loopdesk creates and pauses the hospital (`POST /api/hub/provision`), signs staff in (`/sso`), bills the plan, and owns the hospital's WhatsApp number. Hospitals made by hand are unchanged. Apply `backend/src/db/migrations/009_loopdesk_hub.sql`; setup, contract and the Loopdesk-side work are in [docs/loopdesk-hub.md](docs/loopdesk-hub.md). Test: `npm run test:hub`.
+
+Safety rules (`safety.service.js`) cover English, Hinglish, Hindi, Roman Punjabi and Gurmukhi, for both urgent symptoms and banned AI directives.

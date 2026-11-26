@@ -104,7 +104,7 @@ Message: "${messageText}"
   `;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-5',
+    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
     max_tokens: 800,
     system: CONVERSATION_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: promptContent }]

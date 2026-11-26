@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js",
-    "seed:super-admin": "node scripts/seed-super-admin.js"
+    "seed:super-admin": "node scripts/seed-super-admin.js",
+    "test:hub": "node scripts/test-loopdesk-hub.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
