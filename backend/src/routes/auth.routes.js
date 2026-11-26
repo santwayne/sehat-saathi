@@ -25,10 +25,10 @@ router.post('/login', async (req, res) => {
     const digits = String(phone).replace(/\D/g, '');
     const national = digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
     const { rows } = await pool.query(
-      `SELECT id, clinic_id, name, role, phone, password_hash
+      `SELECT id, clinic_id, name, role, phone, password_hash, deactivated_at
        FROM staff_users
        WHERE regexp_replace(phone, '\\D', '', 'g') IN ($1, $2, $3)
-       ORDER BY (phone = $4) DESC
+       ORDER BY (deactivated_at IS NULL) DESC, (phone = $4) DESC
        LIMIT 1`,
       [digits, national, `91${national}`, phone]
     );
@@ -36,6 +36,10 @@ router.post('/login', async (req, res) => {
 
     if (!staff || !(await verifyPassword(password, staff.password_hash))) {
       return res.status(401).json({ error: 'Invalid phone or password.' });
+    }
+    // Removed staff keep their row (audit history) but cannot sign in.
+    if (staff.deactivated_at) {
+      return res.status(403).json({ error: 'This account has been deactivated. Contact your hospital administrator.' });
     }
 
     const token = issueToken(staff);
@@ -91,7 +95,7 @@ router.patch('/me', async (req, res) => {
 
   if (name !== undefined) {
     if (!String(name).trim()) return res.status(400).json({ error: 'Name cannot be empty.' });
-    params.push(String(name).trim()); sets.push(`name = $${params.length}`);
+    params.push(String(name).trim().replace(/\s+/g, ' ')); sets.push(`name = $${params.length}`);
   }
   if (phone !== undefined) {
     const digits = String(phone).replace(/\D/g, '');
@@ -113,6 +117,8 @@ router.patch('/me', async (req, res) => {
       params
     );
     if (!rows[0]) return res.status(404).json({ error: 'Staff account not found.' });
+    // A doctor's name also shows on the Doctors list / patient assignment: keep it the same.
+    if (name !== undefined) await pool.query('UPDATE doctors SET name = $2 WHERE staff_user_id = $1 AND removed_at IS NULL', [req.user.id, rows[0].name]);
     await logAudit(req, 'profile.update', {
       targetType: 'staff',
       targetId: req.user.id,

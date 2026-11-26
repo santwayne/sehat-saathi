@@ -55,7 +55,7 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor'), async (r
         // show up in a doctor's own queue — only admins/coordinators/nurses
         // see those, which is intentional).
         params.push(req.user.id);
-        query += ` AND (f.assigned_to = $${params.length} OR p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $${params.length}))`;
+        query += ` AND (f.assigned_to = $${params.length} OR p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $${params.length} AND removed_at IS NULL ORDER BY created_at DESC LIMIT 1))`;
       }
     }
 

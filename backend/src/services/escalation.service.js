@@ -9,7 +9,9 @@ async function createEscalationFlag({ patientId, conversationId, flagType, prior
 
   if (assignedDoctorId) {
     const docStaff = await pool.query(
-      'SELECT staff_user_id FROM doctors WHERE id = $1',
+      // Only an active login: a removed doctor's flags go to the coordinator queue.
+      `SELECT d.staff_user_id FROM doctors d JOIN staff_users s ON s.id = d.staff_user_id
+        WHERE d.id = $1 AND s.deactivated_at IS NULL`,
       [assignedDoctorId]
     );
     assignedStaffId = docStaff.rows[0]?.staff_user_id || null;

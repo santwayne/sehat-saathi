@@ -197,3 +197,13 @@ Apply `src/db/migrations/008_followup_opt_out.sql`.
 Sehat Saathi can be sold as a Loopdesk package for hospitals: Loopdesk creates and pauses the hospital (`POST /api/hub/provision`), signs staff in (`/sso`), bills the plan, and owns the hospital's WhatsApp number. Hospitals made by hand are unchanged. Apply `backend/src/db/migrations/009_loopdesk_hub.sql`; setup, contract and the Loopdesk-side work are in [docs/loopdesk-hub.md](docs/loopdesk-hub.md). Test: `npm run test:hub`.
 
 Safety rules (`safety.service.js`) cover English, Hinglish, Hindi, Roman Punjabi and Gurmukhi, for both urgent symptoms and banned AI directives.
+
+## Removing staff (Nov 2026)
+
+"Add staff member" with role Doctor creates a login (`staff_users`) **and** a Doctors-list record (`doctors`), now in one server transaction. **Remove** (Settings → Clinic staff, or the bin icon on Doctors) handles both together:
+
+- the login is **deactivated** (`deactivated_at`): can't sign in, existing tokens are refused, no flag alerts. The row stays so the audit log, prescriptions and flags still name the person;
+- the linked doctor record is **retired** (`removed_at`): gone from the Doctors list, assignment dropdowns and OCR doctor matching;
+- the doctor's patients move to the doctor the admin picks, or stay unassigned; their open flags follow.
+
+Re-adding the same phone in the same hospital reactivates that login (and doctor record). Names and phones are trimmed before saving. API: `GET /api/staff/:id/removal`, `DELETE /api/staff/:id?reassign_to=<doctorId>` (same for `/api/doctors/:id`). Apply `backend/src/db/migrations/010_staff_removal.sql` (idempotent; also trims existing names). Test: `npm run test:staff`.

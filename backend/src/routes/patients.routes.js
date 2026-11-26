@@ -48,7 +48,7 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor'), async (r
 
       if (req.user.role === 'doctor') {
         params.push(req.user.id);
-        query += ` AND p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $${params.length})`;
+        query += ` AND p.assigned_doctor_id = (SELECT id FROM doctors WHERE staff_user_id = $${params.length} AND removed_at IS NULL ORDER BY created_at DESC LIMIT 1)`;
       }
     }
 
@@ -142,9 +142,10 @@ router.post('/', async (req, res) => {
     assigned_doctor_id, consent_given,
   } = req.body;
 
-  if (!clinic_id || !name || !phone) {
+  if (!clinic_id || !String(name || '').trim() || !String(phone || '').trim()) {
     return res.status(400).json({ error: 'clinic_id, name, and phone are required.' });
   }
+  const cleanName = String(name).trim().replace(/\s+/g, ' ');
 
   // Bug 5 fix: this was previously only captured, never enforced — a
   // submission with the consent checkbox left unticked was enrolled
@@ -178,7 +179,7 @@ router.post('/', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
-        clinic_id, name, cleanPhone,
+        clinic_id, cleanName, cleanPhone,
         language_pref || 'en',
         preferred_channel || 'whatsapp',
         assigned_doctor_id || null,
@@ -227,9 +228,9 @@ router.patch('/:id', async (req, res) => {
   let i = 1;
 
   if (name !== undefined) {
-    if (!name.trim()) return res.status(400).json({ error: 'Name cannot be empty.' });
+    if (!String(name).trim()) return res.status(400).json({ error: 'Name cannot be empty.' });
     setClauses.push(`name = $${i++}`);
-    values.push(name);
+    values.push(String(name).trim().replace(/\s+/g, ' '));
   }
   if (phone !== undefined) {
     const cleanPhone = normalizePhone(phone);

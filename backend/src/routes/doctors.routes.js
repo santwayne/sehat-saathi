@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { requireRole } = require('../services/auth.service');
+const { clean, previewDoctor, removeDoctor, sendError } = require('../services/staff-removal.service');
 
 /**
  * GET /api/doctors?clinic_id=
@@ -18,10 +19,10 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_ad
     const query = clinic_id
       ? { text: `SELECT d.id, d.clinic_id, d.name, d.specialty, d.staff_user_id, s.phone AS staff_phone
                  FROM doctors d LEFT JOIN staff_users s ON d.staff_user_id = s.id
-                 WHERE d.clinic_id = $1 ORDER BY d.name`, values: [clinic_id] }
+                 WHERE d.clinic_id = $1 AND d.removed_at IS NULL ORDER BY d.name`, values: [clinic_id] }
       : { text: `SELECT d.id, d.clinic_id, d.name, d.specialty, d.staff_user_id, s.phone AS staff_phone
                  FROM doctors d LEFT JOIN staff_users s ON d.staff_user_id = s.id
-                 ORDER BY d.name`, values: [] };
+                 WHERE d.removed_at IS NULL ORDER BY d.name`, values: [] };
 
     const { rows } = await pool.query(query.text, query.values);
     return res.status(200).json({ success: true, data: rows });
@@ -37,7 +38,10 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'doctor', 'super_ad
  * to them directly (Section 5). Requires an authenticated admin.
  */
 router.post('/', requireRole('admin', 'super_admin'), async (req, res) => {
-  const { clinic_id, name, specialty, staff_user_id } = req.body;
+  const { staff_user_id } = req.body;
+  const clinic_id = req.user.role === 'super_admin' ? req.body.clinic_id : req.user.clinic_id;
+  const name = clean(req.body.name);
+  const specialty = clean(req.body.specialty);
 
   if (!clinic_id || !name) {
     return res.status(400).json({ error: 'clinic_id and name are required.' });
@@ -58,25 +62,29 @@ router.post('/', requireRole('admin', 'super_admin'), async (req, res) => {
 });
 
 /**
- * DELETE /api/doctors/:id
- * Removes a doctor record. Any patient currently assigned to this doctor
- * keeps their record — assigned_doctor_id falls back to NULL via the
- * existing ON DELETE SET NULL foreign key (schema.sql), it just shows as
- * unassigned rather than being blocked or cascaded away. Admin-only,
- * matching POST above.
+ * GET /api/doctors/:id/removal — what removing this doctor affects (see staff).
+ */
+router.get('/:id/removal', requireRole('admin', 'super_admin'), async (req, res) => {
+  try {
+    return res.json({ success: true, data: await previewDoctor(req, req.params.id) });
+  } catch (err) {
+    return sendError(res, err, 'preview doctor removal');
+  }
+});
+
+/**
+ * DELETE /api/doctors/:id?reassign_to=<doctorId>
+ * Retires the doctor record (hidden from lists, kept for old prescriptions).
+ * If the doctor has a staff login, that login is deactivated too — removing
+ * only the record used to leave a login that could still sign in. Patients
+ * move to reassign_to, or become unassigned when it is omitted.
  */
 router.delete('/:id', requireRole('admin', 'super_admin'), async (req, res) => {
-  const { id } = req.params;
-
   try {
-    const { rows } = await pool.query('DELETE FROM doctors WHERE id = $1 RETURNING id', [id]);
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Doctor not found.' });
-    }
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Failed to delete doctor:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    const result = await removeDoctor(req, req.params.id, { reassignTo: req.query.reassign_to || null });
+    return res.status(200).json({ success: true, data: result });
+  } catch (err) {
+    return sendError(res, err, 'remove doctor');
   }
 });
 

@@ -82,7 +82,7 @@ async function matchDoctor({ clinicId, rawInput }) {
     `SELECT da.doctor_id, da.alias, d.name
      FROM doctor_aliases da
      JOIN doctors d ON da.doctor_id = d.id
-     WHERE d.clinic_id = $1`,
+     WHERE d.clinic_id = $1 AND d.removed_at IS NULL`,
     [clinicId]
   );
   const aliasHit = aliasRes.rows.find((row) => normalizeForMatch(row.alias) === normalizedInput);
@@ -95,7 +95,7 @@ async function matchDoctor({ clinicId, rawInput }) {
     };
   }
 
-  const docRes = await pool.query('SELECT id, name FROM doctors WHERE clinic_id = $1', [clinicId]);
+  const docRes = await pool.query('SELECT id, name FROM doctors WHERE clinic_id = $1 AND removed_at IS NULL', [clinicId]);
   if (docRes.rows.length === 0) {
     return { status: 'no_match', candidate: null, score: 0 };
   }
