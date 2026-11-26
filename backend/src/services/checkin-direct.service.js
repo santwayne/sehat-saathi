@@ -28,9 +28,9 @@ async function sendDueCheckinsDirectly() {
       // can't be placed (or voice isn't configured) they still get the WhatsApp
       // check-in rather than silently missing it.
       let calledInstead = false;
-      if (row.preferred_channel === 'voice' && voice.isConfigured() && await voice.allowedForClinic(row.clinic_id)) {
+      if (row.preferred_channel === 'voice' && await voice.canCall(row.clinic_id)) {
         try {
-          await voice.placeCheckinCall({ id: row.patient_id, phone: row.phone, language_pref: row.language_pref });
+          await voice.placeCheckinCall({ id: row.patient_id, phone: row.phone, language_pref: row.language_pref }, row.clinic_id);
           calledInstead = true;
         } catch (callErr) {
           console.error(`Voice check-in call failed for patient ${row.patient_id}, falling back to WhatsApp:`, callErr.message);

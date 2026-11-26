@@ -17,10 +17,17 @@ const ok = (m) => { passed++; console.log(`  ✓ ${m}`); };
 
 // ---- fake Loopdesk: records what Sehat Saathi sends through it ----
 const sent = [];
+const calls = [];
 const fakeHub = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => { body += c; });
   req.on('end', () => {
+    if (req.url === '/api/v1/outbound-calls') { // fake WayneRing
+      if (req.headers.authorization !== 'Bearer wr-test-key') { res.writeHead(401).end('{}'); return; }
+      calls.push(JSON.parse(body));
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ id: `call_${calls.length}` }));
+      return;
+    }
     const auth = (req.headers.authorization || '').slice(7);
     let claims;
     try { claims = jwt.verify(auth, process.env.HUB_SECRET, { issuer: 'sehat-saathi', audience: 'regulars-hub' }); } catch {
@@ -45,6 +52,10 @@ const hubToken = (sub, purpose, extra = {}) => jwt.sign({ purpose, jti: crypto.r
 (async () => {
   await new Promise((r) => fakeHub.listen(0, r));
   process.env.HUB_API_URL = `http://127.0.0.1:${fakeHub.address().port}`;
+  process.env.WAYNERING_BASE_URL = process.env.HUB_API_URL;
+  process.env.WAYNERING_API_KEY = 'wr-test-key';
+  process.env.CALL_WEBHOOK_SECRET = 'wr-webhook-secret-0123456789';
+  process.env.PUBLIC_BASE_URL = 'https://api.sehat.example';
   const app = require('../src/app');
   const { pool } = require('../src/db');
   const server = app.listen(0);
@@ -123,6 +134,39 @@ const hubToken = (sub, purpose, extra = {}) => jwt.sign({ purpose, jti: crypto.r
   const media = await require('../src/services/whatsapp.service').downloadWhatsAppMedia('media123', clinicId);
   assert.equal(Buffer.from(media.base64, 'base64').toString(), 'fake-jpeg'); assert.equal(media.mimeType, 'image/jpeg');
   ok('prescription photos are downloaded through Loopdesk (media lives in its WABA)');
+
+  // ---------- templates through Loopdesk ----------
+  const wa = require('../src/services/whatsapp.service');
+  await wa.sendWhatsAppTemplate(patientPhone, 'patient_checkin', 'ta', ['Mandeep'], clinicId);
+  const tpl = sent.filter((m) => m.message.type === 'template').pop();
+  assert.equal(tpl.message.template.name, 'sehat_patient_checkin'); assert.equal(tpl.message.template.language.code, 'en');
+  ok('templates go out as sehat_<name> (Loopdesk\'s approved set), unknown language → English');
+
+  // ---------- calls only through WayneRing, only with WayneRing in the package ----------
+  const sign = (body) => crypto.createHmac('sha256', process.env.CALL_WEBHOOK_SECRET).update(body).digest('hex');
+  const hook = async (payload, sig) => {
+    const raw = JSON.stringify(payload);
+    const r = await fetch(`${BASE}/api/voice/waynering/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(sig !== false ? { 'x-waynering-signature': sig || sign(raw) } : {}) }, body: raw });
+    return r.status;
+  };
+  assert.equal(await voice.callRoute(clinicId), 'waynering');
+  await voice.placeCheckinCall({ id: patient.id, phone: patientPhone, language_pref: 'pa' }, clinicId);
+  assert.equal(calls.length, 1); assert.equal(calls[0].language, 'pa'); assert.equal(calls[0].metadata.sehat_saathi_patient_id, patient.id);
+  assert.match(calls[0].instructions, /Never give medical advice/); assert.equal(calls[0].webhook_url, 'https://api.sehat.example/api/voice/waynering/webhook');
+  assert.equal(await hook({ id: 'call_1', status: 'completed', outcome: 'SYMPTOM', metadata: { sehat_saathi_patient_id: patient.id } }, false), 401);
+  assert.equal(await hook({ id: 'call_1', status: 'completed', outcome: 'SYMPTOM', metadata: { sehat_saathi_patient_id: patient.id } }, 'deadbeef'), 401);
+  assert.equal(await hook({ id: 'call_1', status: 'completed', outcome: 'SYMPTOM', summary: 'Patient said saans nahi aa rahi since morning', metadata: { sehat_saathi_patient_id: patient.id } }), 200);
+  await wait(500);
+  const { rows: vflags } = await pool.query(`SELECT priority, flag_type FROM flags WHERE patient_id=$1 AND flag_type='symptom_reported' ORDER BY created_at DESC`, [patient.id]);
+  assert.equal(vflags[0].priority, 'urgent');
+  const before = sent.length;
+  assert.equal(await hook({ id: 'call_2', status: 'no-answer', metadata: { sehat_saathi_patient_id: patient.id } }), 200);
+  await wait(500);
+  assert.ok(sent.length > before && sent[sent.length - 1].to === patientPhone, 'unanswered call → WhatsApp check-in via Loopdesk');
+  await call('POST', '/api/hub/provision', { token: hubToken(BIZ, 'provision'), body: provisionBody({ tools: ['SEHAT_SAATHI'] }) });
+  require('../src/services/hub.service').clearHubCache();
+  assert.equal(await voice.canCall(clinicId), false);
+  ok('WayneRing: Punjabi check-in call; signed result only; "saans nahi aa rahi" → URGENT; no answer → WhatsApp; WayneRing removed → no calls');
 
   // ---------- billing stays in Loopdesk ----------
   const { rows: [plan] } = await pool.query(

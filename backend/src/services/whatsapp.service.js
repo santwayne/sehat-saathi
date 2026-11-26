@@ -132,7 +132,11 @@ async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyPar
   // under the same name (see README → Loopdesk).
   const hubId = await hub.hubWhatsAppRoute(clinicId);
   if (hubId) {
-    return hub.hubSend(hubId, normalizePhone(toPhone), { type: 'template', template: { name: templateName, language: { code: languageCode }, components } })
+    // Loopdesk keeps every tool's templates in one Meta account, prefixed per tool
+    // (sehat_patient_checkin…), approved in en / hi / pa (Loopdesk lib/hub/tool-templates.ts).
+    const hubName = templateName.startsWith('sehat_') ? templateName : `sehat_${templateName}`;
+    const hubLang = ['en', 'hi', 'pa'].includes(languageCode) ? languageCode : 'en';
+    return hub.hubSend(hubId, normalizePhone(toPhone), { type: 'template', template: { name: hubName, language: { code: hubLang }, components } })
       .catch(async (error) => {
         await recordPlatformEvent({ source: 'whatsapp_send', clinicId, message: `Template "${templateName}": ${error.message}`, details: { via: 'loopdesk', template: templateName } });
         throw error;

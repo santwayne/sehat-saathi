@@ -24,7 +24,8 @@ const { ensureIntegrationsLoaded } = require('./services/integrations.service');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// rawBody: signed webhooks (WayneRing) are verified over the exact bytes received.
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf.toString('utf8'); } }));
 app.use(attachUser);
 // Applies keys saved in Super Admin → Integrations on top of env vars.
 app.use(ensureIntegrationsLoaded);
