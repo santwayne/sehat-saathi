@@ -69,7 +69,7 @@ async function processPrescriptionOCR(imageBase64, mediaType = 'image/jpeg') {
   let response;
   try {
     response = await anthropic.messages.create({
-      model: 'claude-sonnet-5',
+      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
       max_tokens: 1800,
       system: SYSTEM_PROMPT,
       messages: [

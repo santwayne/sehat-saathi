@@ -6,6 +6,7 @@ const { t } = require('../services/i18n');
 const { sendWhatsAppMessage } = require('../services/whatsapp.service');
 const { processInboundMessage, logConversation } = require('../services/conversation.service');
 const { createEscalationFlag } = require('../services/escalation.service');
+const { isUrgentKeywordPresent } = require('../services/safety.service');
 
 // Twilio webhooks for voice check-ins. Twilio posts form-encoded bodies and
 // signs every request; unsigned/forged requests are rejected, and the whole
@@ -20,6 +21,58 @@ function requireTwilio(req, res, next) {
   }
   next();
 }
+/**
+ * WayneRing call finished (Loopdesk hospitals). Signed with CALL_WEBHOOK_SECRET;
+ * unsigned or badly signed requests are refused. Outcome handling matches the
+ * Twilio path: missed dose → normal flag, worrying symptom → urgent flag,
+ * not answered → the same check-in on WhatsApp.
+ */
+router.post('/waynering/webhook', async (req, res) => {
+  if (!voice.validWayneRingSignature(req.rawBody, req.headers['x-waynering-signature'])) {
+    return res.status(401).json({ error: 'Bad signature.' });
+  }
+  const b = req.body || {};
+  const patientId = b.metadata?.sehat_saathi_patient_id;
+  const callId = b.id || b.call_id || null;
+  res.json({ ok: true });
+  try {
+    const patient = patientId ? await loadPatient(patientId) : null;
+    if (!patient) return;
+    const status = String(b.status || '').toLowerCase();
+    const outcome = String(b.outcome || b.disposition || '').toUpperCase();
+    const heard = [b.summary, b.transcript_summary, typeof b.transcript === 'string' ? b.transcript : null].filter(Boolean).join(' \n ');
+
+    // Not answered / failed: the same check-in on WhatsApp instead.
+    if (['failed', 'no-answer', 'no_answer', 'busy', 'canceled'].includes(status) || outcome === 'NO_ANSWER') {
+      const text = t('checkin', patient.language_pref);
+      await sendWhatsAppMessage(patient.phone, text, patient.clinic_id).catch((e) => console.error('WhatsApp fallback failed:', e.message));
+      await logConversation(patient.id, 'outbound', `[WhatsApp fallback] ${text}`, 'checkin_response');
+      return;
+    }
+
+    const convId = await logConversation(patient.id, 'inbound', `[Voice · WayneRing] ${outcome || 'COMPLETED'}${heard ? ` — ${heard.slice(0, 1500)}` : ''}`, 'checkin_response', 'patient', 'voice');
+    const urgent = isUrgentKeywordPresent(heard);
+    if (urgent || outcome === 'SYMPTOM') {
+      await createEscalationFlag({
+        patientId: patient.id, conversationId: convId, flagType: 'symptom_reported', priority: urgent ? 'urgent' : 'normal',
+        assignedDoctorId: patient.assigned_doctor_id, reason: `Voice check-in (WayneRing): ${(heard || 'patient reported a symptom').slice(0, 400)}`,
+      });
+    } else if (outcome === 'MISSED_DOSE') {
+      const open = await pool.query(`SELECT 1 FROM flags WHERE patient_id = $1 AND flag_type = 'missed_dose' AND status = 'open'`, [patient.id]);
+      if (open.rows.length === 0) {
+        await createEscalationFlag({
+          patientId: patient.id, conversationId: convId, flagType: 'missed_dose', priority: 'normal',
+          assignedDoctorId: patient.assigned_doctor_id, reason: 'Patient reported a missed dose on a voice check-in call.',
+        });
+      }
+    }
+    if (callId) await pool.query("UPDATE conversations SET external_id = COALESCE(external_id, $2) WHERE id = $1", [convId, callId]).catch(() => {});
+  } catch (err) {
+    console.error('WayneRing webhook handling failed:', err.message);
+  }
+});
+
+// Everything below is Twilio's (signed by Twilio).
 router.use(requireTwilio);
 
 const xml = (res, body) => res.status(200).type('text/xml').send(body);

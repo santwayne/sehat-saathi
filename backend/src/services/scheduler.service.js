@@ -32,9 +32,9 @@ const checkinWorker = new Worker(
 
     // Voice-preferring patients get a call when Twilio is configured; any
     // failure falls through to the WhatsApp template so the check-in isn't lost.
-    if (patient.preferred_channel === 'voice' && voice.isConfigured()) {
+    if (patient.preferred_channel === 'voice' && await voice.canCall(clinicId)) {
       try {
-        await voice.placeCheckinCall({ id: patientId, phone, language_pref: languagePref });
+        await voice.placeCheckinCall({ id: patientId, phone, language_pref: languagePref }, clinicId);
         await pool.query(
           `UPDATE checkin_schedules SET next_checkin_at = NOW() + (frequency_days || ' days')::INTERVAL WHERE id = $1`,
           [scheduleId]

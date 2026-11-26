@@ -15,6 +15,16 @@ const { setRecordsMode } = require('../services/records-access.service');
  */
 router.use(requireRole('super_admin'));
 
+// Loopdesk hospitals are sold, billed and paused in Loopdesk. Billing them here
+// too would charge twice, and a plan set here would be overwritten by the next
+// Loopdesk update.
+async function billedInLoopdesk(res, clinicId) {
+  const { rows } = await pool.query('SELECT hub_business_id FROM clinics WHERE id = $1', [clinicId]);
+  if (!rows[0]?.hub_business_id) return false;
+  res.status(409).json({ code: 'BILLED_IN_LOOPDESK', error: 'This hospital is a Loopdesk package: change its plan or bill it in Loopdesk admin → Businesses.' });
+  return true;
+}
+
 const num = (v) => (v === null || v === undefined ? 0 : Number(v));
 const isUuid = (v) => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
 const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
@@ -266,6 +276,7 @@ router.put('/subscriptions/:clinicId', async (req, res) => {
   }
   if (plan_id && !isUuid(plan_id)) return res.status(400).json({ error: 'Invalid plan_id.' });
   if (status !== 'cancelled' && !plan_id) return res.status(400).json({ error: 'Pick a plan.' });
+  if (await billedInLoopdesk(res, clinicId)) return;
 
   let trialEnds = null;
   if (status === 'trial') {
@@ -357,6 +368,7 @@ router.get('/invoices', async (req, res) => {
 router.post('/invoices', async (req, res) => {
   const { clinic_id, amount_inr, period_start, period_end, due_date, notes, status = 'sent' } = req.body;
   if (!isUuid(clinic_id)) return res.status(400).json({ error: 'Pick a hospital.' });
+  if (await billedInLoopdesk(res, clinic_id)) return;
   const amount = Number(amount_inr);
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'amount_inr must be ≥ 0.' });
   for (const [k, v] of Object.entries({ period_start, period_end, due_date })) {
