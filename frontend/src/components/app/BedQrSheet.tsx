@@ -16,6 +16,14 @@ interface Bed {
   patient_name: string | null;
 }
 
+// "A-1, A-2 … A-10", not "A-1, A-10, A-2" (bug list #10). The API sorts the
+// same way; this keeps the order after adds/removes too.
+const naturalOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+function compareBeds(a: Bed, b: Bed) {
+  if ((a.ward == null) !== (b.ward == null)) return a.ward == null ? 1 : -1;
+  return naturalOrder.compare(a.ward ?? '', b.ward ?? '') || naturalOrder.compare(a.label, b.label);
+}
+
 // Roadmap "QR code at every hospital bed": one printable QR per bed. Scanning
 // opens WhatsApp with the bed's code prefilled, so the patient is tied to
 // their bed from the very first message.
@@ -31,14 +39,18 @@ export function BedQrSheet({
   onOpenChange: (v: boolean) => void;
 }) {
   const [beds, setBeds] = useState<Bed[]>([]);
+  const [missingWhatsApp, setMissingWhatsApp] = useState<string | null>(null);
   const [qrs, setQrs] = useState<Record<string, string>>({});
   const [form, setForm] = useState({ prefix: '', from: '1', to: '10', ward: '' });
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     api
-      .get<{ data: Bed[] }>(`/api/beds?clinic_id=${clinicId}`)
-      .then((r) => setBeds(r.data))
+      .get<{ data: Bed[]; whatsapp_missing?: string }>(`/api/beds?clinic_id=${clinicId}`)
+      .then((r) => {
+        setBeds([...r.data].sort(compareBeds));
+        setMissingWhatsApp(r.whatsapp_missing ?? null);
+      })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load beds'));
   }, [clinicId]);
 
@@ -99,6 +111,13 @@ export function BedQrSheet({
           </SheetDescription>
         </SheetHeader>
 
+        {missingWhatsApp && (
+          <div role="status" className="no-print mx-4 mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+            <p className="font-medium">QR codes need the hospital's WhatsApp number</p>
+            <p className="mt-0.5 text-xs">{missingWhatsApp} You can add beds now; their QR codes appear once the number is saved.</p>
+          </div>
+        )}
+
         <form onSubmit={create} className="no-print mt-4 grid grid-cols-2 gap-2 px-4 sm:grid-cols-5">
           <Input placeholder="Prefix (A-)" value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })} />
           <Input required type="number" min={0} placeholder="From" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />
@@ -133,11 +152,11 @@ export function BedQrSheet({
                   <img src={qrs[b.id]} alt={`QR for bed ${b.label}`} className="mx-auto size-32" />
                 ) : (
                   <div className="mx-auto flex size-32 items-center justify-center text-xs text-muted-foreground">
-                    {b.link ? '…' : 'No WhatsApp number'}
+                    {b.link ? '…' : 'QR after WhatsApp number is added'}
                   </div>
                 )}
                 <p className="mt-1 font-display text-base font-semibold">Bed {b.label}</p>
-                {b.ward && <p className="text-xs text-muted-foreground">{b.ward}</p>}
+                {b.ward && <p className="text-xs text-muted-foreground">Ward: {b.ward}</p>}
                 <p className="text-xs text-muted-foreground">Scan to connect on WhatsApp</p>
                 <button onClick={() => void retire(b.id)} className="no-print mt-1 text-xs text-muted-foreground hover:text-destructive">
                   Remove

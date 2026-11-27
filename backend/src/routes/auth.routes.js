@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { verifyPassword, issueToken, hashPassword } = require('../services/auth.service');
 const { logAudit } = require('../services/audit.service');
 const { clinicAccessInfo, recordsAccessFor } = require('../services/records-access.service');
+const { normalizePhone, isValidPhone, phoneVariants } = require('../services/phone');
 
 /**
  * POST /api/auth/login
@@ -18,24 +19,23 @@ router.post('/login', async (req, res) => {
   }
 
   try {
-    // Match on digits only, and treat a bare 10-digit number and the same
-    // number with an India country code (91) as equal — an account created as
-    // "+919876543210" must still sign in with "9876543210" (and vice versa).
-    // An exact match wins if several rows qualify.
-    const digits = String(phone).replace(/\D/g, '');
-    const national = digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
+    // Any stored form of the number matches ("919876543210", "9876543210",
+    // "+91 98765 43210", "09876543210") — bug list #3. Active account first.
     const { rows } = await pool.query(
-      `SELECT id, clinic_id, name, role, phone, password_hash, deactivated_at
-       FROM staff_users
-       WHERE regexp_replace(phone, '\\D', '', 'g') IN ($1, $2, $3)
-       ORDER BY (deactivated_at IS NULL) DESC, (phone = $4) DESC
+      `SELECT s.id, s.clinic_id, s.name, s.role, s.phone, s.password_hash, s.deactivated_at, c.name AS clinic_name
+       FROM staff_users s LEFT JOIN clinics c ON c.id = s.clinic_id
+       WHERE regexp_replace(s.phone, '\\D', '', 'g') = ANY($1::text[])
+       ORDER BY (s.deactivated_at IS NULL) DESC, (s.phone = $2) DESC
        LIMIT 1`,
-      [digits, national, `91${national}`, phone]
+      [phoneVariants(phone), normalizePhone(phone)]
     );
     const staff = rows[0];
 
+    // One message for "no such number" and "wrong password" on purpose (no
+    // probing which numbers have accounts); the login page explains what to
+    // check and how to get a reset (bug list #9).
     if (!staff || !(await verifyPassword(password, staff.password_hash))) {
-      return res.status(401).json({ error: 'Invalid phone or password.' });
+      return res.status(401).json({ error: 'Invalid phone or password.', code: 'INVALID_CREDENTIALS' });
     }
     // Removed staff keep their row (audit history) but cannot sign in.
     if (staff.deactivated_at) {
@@ -43,12 +43,13 @@ router.post('/login', async (req, res) => {
     }
 
     const token = issueToken(staff);
+    await pool.query('UPDATE staff_users SET last_login_at = NOW() WHERE id = $1', [staff.id]);
     await logAudit(req, 'auth.login', { actor: staff, targetType: 'staff', targetId: staff.id, clinicId: staff.clinic_id });
     return res.status(200).json({
       success: true,
       token,
       staff: {
-        id: staff.id, clinic_id: staff.clinic_id, name: staff.name, role: staff.role, phone: staff.phone,
+        id: staff.id, clinic_id: staff.clinic_id, clinic_name: staff.clinic_name, name: staff.name, role: staff.role, phone: staff.phone,
         // Drives which pages the UI shows; the API enforces it independently.
         records_access: recordsAccessFor(staff.role, await clinicAccessInfo(staff.clinic_id)),
       },
@@ -69,7 +70,8 @@ router.get('/me', async (req, res) => {
   }
   try {
     const { rows } = await pool.query(
-      'SELECT id, clinic_id, name, role, phone, email, notify_on_flag FROM staff_users WHERE id = $1',
+      `SELECT s.id, s.clinic_id, c.name AS clinic_name, s.name, s.role, s.phone, s.email, s.notify_on_flag
+         FROM staff_users s LEFT JOIN clinics c ON c.id = s.clinic_id WHERE s.id = $1`,
       [req.user.id]
     );
     if (!rows[0]) {
@@ -98,9 +100,9 @@ router.patch('/me', async (req, res) => {
     params.push(String(name).trim().replace(/\s+/g, ' ')); sets.push(`name = $${params.length}`);
   }
   if (phone !== undefined) {
-    const digits = String(phone).replace(/\D/g, '');
-    if (!/^\d{10,15}$/.test(digits)) return res.status(400).json({ error: 'Enter a valid phone number (10–15 digits).' });
-    params.push(String(phone).trim()); sets.push(`phone = $${params.length}`);
+    const canonical = normalizePhone(phone);
+    if (!isValidPhone(canonical)) return res.status(400).json({ error: 'Enter a valid mobile number: 10 digits, or with country code.' });
+    params.push(canonical); sets.push(`phone = $${params.length}`);
   }
   if (email !== undefined) {
     const e = String(email || '').trim();
@@ -113,7 +115,7 @@ router.patch('/me', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `UPDATE staff_users SET ${sets.join(', ')} WHERE id = $${params.length}
-       RETURNING id, clinic_id, name, role, phone, email`,
+       RETURNING id, clinic_id, (SELECT c.name FROM clinics c WHERE c.id = staff_users.clinic_id) AS clinic_name, name, role, phone, email`,
       params
     );
     if (!rows[0]) return res.status(404).json({ error: 'Staff account not found.' });

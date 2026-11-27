@@ -54,6 +54,29 @@ function pick(group, lang) {
 }
 
 /**
+ * Sends (or re-sends) the opt-in request and records whether WhatsApp took it
+ * (bug list #6): invite_status 'sent' | 'failed' + the error, so the patient
+ * page can say "Invite not delivered" instead of "Waiting for YES".
+ */
+async function sendInvite(member, { patient, clinicName }) {
+  const lang = patient.language_pref || 'hi';
+  const fam = member.name || 'there';
+  const text = pick(T.invite, lang)(fam, patient.name, clinicName);
+  let error = null;
+  try {
+    await sendTemplateWithTextFallback(member.phone, 'family_invite', lang, [fam, patient.name, clinicName], text, patient.clinic_id);
+  } catch (err) {
+    error = err.response?.data?.error?.message || err.message || 'WhatsApp did not accept the message';
+    console.error(`Family invite to ${member.phone} failed:`, error);
+  }
+  const { rows: [row] } = await pool.query(
+    `UPDATE family_members SET invite_status = $2, invite_error = $3, invited_at = NOW()
+      WHERE id = $1 RETURNING *`,
+    [member.id, error ? 'failed' : 'sent', error ? String(error).slice(0, 500) : null]);
+  return { member: row, delivered: !error };
+}
+
+/**
  * Staff action: add a family member and send the opt-in request. The row is
  * created first so the invite is on record even if WhatsApp delivery fails.
  */
@@ -63,19 +86,7 @@ async function inviteFamilyMember({ patient, clinicName, name, phone, relationsh
      VALUES ($1, $2, $3, $4) RETURNING *`,
     [patient.id, name || null, phone, relationship || null]
   );
-  const member = rows[0];
-
-  const lang = patient.language_pref || 'hi';
-  const fam = name || 'there';
-  const text = pick(T.invite, lang)(fam, patient.name, clinicName);
-  let delivered = true;
-  try {
-    await sendTemplateWithTextFallback(phone, 'family_invite', lang, [fam, patient.name, clinicName], text, patient.clinic_id);
-  } catch (err) {
-    delivered = false;
-    console.error(`Family invite to ${phone} failed:`, err.message);
-  }
-  return { member, delivered };
+  return sendInvite(rows[0], { patient, clinicName });
 }
 
 /**
@@ -203,4 +214,4 @@ async function sendWeeklyDigests() {
   return { scanned: members.length, sent };
 }
 
-module.exports = { inviteFamilyMember, handleFamilyMessage, sendWeeklyDigests };
+module.exports = { inviteFamilyMember, sendInvite, handleFamilyMessage, sendWeeklyDigests };

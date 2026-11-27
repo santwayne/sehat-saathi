@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/context/AuthContext';
+import { PHONE_HINT, PHONE_PLACEHOLDER } from '@/lib/phone';
 
 export default function Login() {
   const { staff, login } = useAuth();
@@ -12,6 +13,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   if (staff) return <Navigate to="/app" replace />;
 
@@ -24,6 +26,7 @@ export default function Login() {
       navigate('/app');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
+      setShowHelp(true);
     } finally {
       setLoading(false);
     }
@@ -47,15 +50,29 @@ export default function Login() {
               <Label htmlFor="phone">Phone number</Label>
               <Input
                 id="phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="username"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="03001234567"
+                placeholder={PHONE_PLACEHOLDER}
+                aria-describedby="phone-hint"
                 required
               />
+              <p id="phone-hint" className="text-xs text-muted-foreground">{PHONE_HINT}</p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <button
+                  type="button"
+                  onClick={() => setShowHelp((v) => !v)}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <Input
                 id="password"
                 type="password"
@@ -66,9 +83,22 @@ export default function Login() {
             </div>
 
             {error ? (
-              <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
               </p>
+            ) : null}
+
+            {/* Same message for an unknown number and a wrong password, on
+                purpose — so say what to check and how to get a reset (bug list #9). */}
+            {showHelp ? (
+              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                <p className="font-medium text-foreground">Can't sign in?</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  <li>Use the same mobile number your hospital admin saved for you (Settings → Clinic staff).</li>
+                  <li>Forgot your password? Ask your hospital admin to reset it: Settings → Clinic staff → Reset password.</li>
+                  <li>Hospital on Loopdesk? Open Sehat Saathi from your Loopdesk account instead.</li>
+                </ul>
+              </div>
             ) : null}
 
             <Button type="submit" disabled={loading} className="w-full">

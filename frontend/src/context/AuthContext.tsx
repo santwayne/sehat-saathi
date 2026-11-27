@@ -4,6 +4,8 @@ import { api } from '../lib/api';
 export interface Staff {
   id: string;
   clinic_id: string | null;
+  /** Hospital name, shown instead of the clinic id (bug list #5, #11). */
+  clinic_name?: string | null;
   name: string;
   role: 'admin' | 'coordinator' | 'nurse' | 'doctor' | 'super_admin';
   phone: string;

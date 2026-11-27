@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { HeartHandshake, IdCard, Trash2 } from 'lucide-react';
+import { HeartHandshake, IdCard, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
+import { formatPhone, PHONE_PLACEHOLDER } from '@/lib/phone';
 
 interface FamilyMember {
   id: string;
@@ -12,6 +13,15 @@ interface FamilyMember {
   phone: string;
   relationship: string | null;
   status: 'invited' | 'active' | 'opted_out';
+  /** Did WhatsApp accept the opt-in request? null = sent before this was tracked. */
+  invite_status?: 'sent' | 'failed' | null;
+  invite_error?: string | null;
+}
+
+// "Waiting for YES" only once the invite actually went out (bug list #6).
+function statusLabel(m: FamilyMember) {
+  if (m.status === 'invited' && m.invite_status === 'failed') return 'Invite not delivered';
+  return STATUS_LABEL[m.status];
 }
 
 const STATUS_LABEL: Record<FamilyMember['status'], string> = {
@@ -71,13 +81,28 @@ export function FamilyAbhaPanel({
     try {
       const res = await api.post<{ invite_delivered: boolean }>(`/api/patients/${patientId}/family-members`, form);
       if (res.invite_delivered) toast.success('Invite sent on WhatsApp');
-      else toast.warning('Saved, but the WhatsApp invite could not be delivered');
+      else toast.warning('Saved, but the WhatsApp invite was not delivered. Use Resend once the hospital WhatsApp number works.');
       setForm({ name: '', phone: '', relationship: '' });
       load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not add family member');
     } finally {
       setBusy(false);
+    }
+  }
+
+  const [resending, setResending] = useState<string | null>(null);
+  async function resend(id: string) {
+    setResending(id);
+    try {
+      const res = await api.post<{ invite_delivered: boolean }>(`/api/patients/${patientId}/family-members/${id}/resend`);
+      if (res.invite_delivered) toast.success('Invite sent on WhatsApp');
+      else toast.warning('Still not delivered. Check that the hospital WhatsApp number is set up.');
+      load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not resend the invite');
+    } finally {
+      setResending(null);
     }
   }
 
@@ -171,10 +196,27 @@ export function FamilyAbhaPanel({
                     {m.name ?? m.phone}
                     {m.relationship ? <span className="text-muted-foreground"> · {m.relationship}</span> : null}
                   </p>
-                  <p className="text-xs text-muted-foreground">{m.phone}</p>
+                  <p className="text-xs text-muted-foreground">{formatPhone(m.phone)}</p>
+                  {m.status === 'invited' && m.invite_status === 'failed' && m.invite_error && (
+                    <p className="mt-0.5 text-xs text-destructive">{m.invite_error}</p>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <Badge variant={m.status === 'active' ? 'secondary' : 'outline'}>{STATUS_LABEL[m.status]}</Badge>
+                  <Badge variant={m.status === 'active' ? 'secondary' : m.invite_status === 'failed' && m.status === 'invited' ? 'destructive' : 'outline'}>
+                    {statusLabel(m)}
+                  </Badge>
+                  {canEdit && m.status === 'invited' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-xs"
+                      disabled={resending === m.id}
+                      onClick={() => void resend(m.id)}
+                    >
+                      <RefreshCw className="mr-1 size-3" />
+                      {resending === m.id ? 'Sending…' : 'Resend'}
+                    </Button>
+                  )}
                   {canEdit && (
                     <button
                       onClick={() => void removeMember(m.id)}
@@ -192,7 +234,7 @@ export function FamilyAbhaPanel({
         {canEdit && (
           <form onSubmit={addMember} className="mt-3 grid gap-2 sm:grid-cols-3">
             <Input required placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <Input required placeholder="+919876543210" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <Input required placeholder={PHONE_PLACEHOLDER} type="tel" inputMode="tel" title="10-digit mobile number; +91 is added automatically" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             <Input placeholder="Relationship" value={form.relationship} onChange={(e) => setForm({ ...form, relationship: e.target.value })} />
             <Button type="submit" size="sm" disabled={busy} className="sm:col-span-3">
               {busy ? 'Sending invite…' : 'Add & send WhatsApp invite'}

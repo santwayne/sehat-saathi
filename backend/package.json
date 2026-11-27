@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "seed:super-admin": "node scripts/seed-super-admin.js",
     "test:hub": "node scripts/test-loopdesk-hub.js",
-    "test:staff": "node scripts/test-staff-removal.js"
+    "test:staff": "node scripts/test-staff-removal.js",
+    "test:bugs": "node scripts/test-bug-list-27nov.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",

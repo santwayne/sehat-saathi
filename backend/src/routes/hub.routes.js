@@ -7,6 +7,7 @@ const { logAudit } = require('../services/audit.service');
 const { clinicAccessInfo, recordsAccessFor, setRecordsMode, clearClinicAccessCache } = require('../services/records-access.service');
 const { recordPlatformEvent } = require('../services/platform-events.service');
 const hub = require('../services/hub.service');
+const { normalizePhone, isValidPhone, phoneVariants } = require('../services/phone');
 
 /**
  * Loopdesk hub endpoints (mounted at /api/hub). Sehat Saathi is sold as a
@@ -50,7 +51,21 @@ function readProvision(body) {
     recordsMode: b.recordsMode || null,
     business: { name: str(b.business.name), address: str(b.business.address, 1000), phone: str(b.business.phone, 20) },
     owner: { name: str(b.owner.name), email: String(b.owner.email).trim().toLowerCase(), phone: str(b.owner.phone, 20) },
+    whatsapp: readWhatsApp(b.whatsapp),
   };
+}
+
+/**
+ * The hospital's OWN WhatsApp Business number in Loopdesk (bug list #5), used
+ * for the bed QR links: { phoneNumberId, displayNumber }. Loopdesk sends it
+ * only for a location with its own number — never the shared Loopdesk number,
+ * whose webhook belongs to one server. null/absent = not connected yet.
+ */
+function readWhatsApp(w) {
+  if (!w || typeof w !== 'object') return null;
+  const displayNumber = normalizePhone(w.displayNumber);
+  if (!isValidPhone(displayNumber)) return null;
+  return { displayNumber, phoneNumberId: str(String(w.phoneNumberId ?? ''), 50) };
 }
 
 /**
@@ -60,14 +75,27 @@ function readProvision(body) {
  * phone + password in Settings later.
  */
 async function loginPhoneFor(db, ownerPhone) {
-  const d = digitsOf(ownerPhone);
-  const phone = d.length === 10 ? `91${d}` : d;
-  if (/^\d{10,15}$/.test(phone)) {
+  const phone = normalizePhone(ownerPhone);
+  if (isValidPhone(phone)) {
     const { rows } = await db.query(
-      "SELECT 1 FROM staff_users WHERE regexp_replace(phone, '\\D', '', 'g') IN ($1, $2)", [phone, phone.replace(/^91(?=\d{10}$)/, '')]);
+      "SELECT 1 FROM staff_users WHERE regexp_replace(phone, '\\D', '', 'g') = ANY($1::text[])", [phoneVariants(phone)]);
     if (!rows.length) return phone;
   }
   return `hub-${crypto.randomBytes(7).toString('hex')}`; // 18 chars, fits VARCHAR(20)
+}
+
+/** Saves the hospital's own WhatsApp number from Loopdesk, unless another hospital already uses it. */
+async function syncWhatsApp(db, clinic, wa, warnings) {
+  if (!wa || clinic.whatsapp_number === wa.displayNumber) return clinic;
+  const { rows: clash } = await db.query('SELECT 1 FROM clinics WHERE whatsapp_number = $1 AND id <> $2', [wa.displayNumber, clinic.id]);
+  if (clash.length) {
+    warnings.push(`WhatsApp number ${wa.displayNumber} already belongs to another hospital in Sehat Saathi; not saved.`);
+    return clinic;
+  }
+  const { rows: [row] } = await db.query(
+    'UPDATE clinics SET whatsapp_number = $2, hub_whatsapp_phone_number_id = $3 WHERE id = $1 RETURNING *',
+    [clinic.id, wa.displayNumber, wa.phoneNumberId]);
+  return row;
 }
 
 router.post('/provision', async (req, res) => {
@@ -103,6 +131,9 @@ router.post('/provision', async (req, res) => {
           `INSERT INTO staff_users (clinic_id, name, role, phone, email, password_hash) VALUES ($1, $2, 'admin', $3, $4, $5)`,
           [clinic.id, p.owner.name, phone, p.owner.email, await hashPassword(crypto.randomBytes(24).toString('base64url'))]);
       }
+      // Hub hospitals' WhatsApp lives in Loopdesk: keep the QR number in step.
+      clinic = await syncWhatsApp(client, clinic, p.whatsapp, warnings);
+      if (!clinic.whatsapp_number) warnings.push('No WhatsApp number of its own yet: bed QR codes stay off until one is connected in Loopdesk (Settings → location).');
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
@@ -134,7 +165,7 @@ router.post('/provision', async (req, res) => {
       accountId: clinic.id,
       status: clinic.status === 'active' ? 'ACTIVE' : 'PAUSED',
       data: {
-        name: clinic.name, created, recordsMode: clinic.records_mode,
+        name: clinic.name, created, recordsMode: clinic.records_mode, whatsappNumber: clinic.whatsapp_number || null,
         voiceCalls: hub.voiceAllowed(clinic), consoleUrl: base ? `${base}/app` : null,
         ...(warnings.length ? { warnings } : {}),
       },
@@ -162,12 +193,13 @@ router.post('/sso/exchange', async (req, res) => {
     if (!staff) return res.status(403).json({ error: 'No staff login for this hospital.' });
 
     const next = typeof claims.next === 'string' && claims.next.startsWith('/') && !claims.next.startsWith('//') ? claims.next : '/app';
+    await pool.query('UPDATE staff_users SET last_login_at = NOW() WHERE id = $1', [staff.id]);
     await logAudit(req, 'auth.login.loopdesk', { actor: staff, targetType: 'staff', targetId: staff.id, clinicId: clinic.id });
     return res.json({
       success: true,
       token: issueToken(staff),
       next,
-      staff: { ...staff, records_access: recordsAccessFor(staff.role, await clinicAccessInfo(clinic.id)) },
+      staff: { ...staff, clinic_name: clinic.name, records_access: recordsAccessFor(staff.role, await clinicAccessInfo(clinic.id)) },
     });
   } catch (err) {
     return fail(res, err);

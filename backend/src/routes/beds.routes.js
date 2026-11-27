@@ -20,6 +20,18 @@ function generateCode() {
   return `BED-${out}`;
 }
 
+// "wwe1, wwe2 … wwe10", not "wwe1, wwe10, wwe2" (bug list #10).
+const naturalOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+function compareBeds(a, b) {
+  if ((a.ward == null) !== (b.ward == null)) return a.ward == null ? 1 : -1;
+  return naturalOrder.compare(a.ward ?? '', b.ward ?? '') || naturalOrder.compare(a.label, b.label);
+}
+
+// Loopdesk hospitals get their number from Loopdesk (provision); others from Super Admin.
+const noWhatsApp = (clinic) => (clinic.hub_business_id
+  ? 'Connect the hospital\'s own WhatsApp Business number in Loopdesk (Settings → location). The shared Loopdesk number can\'t be used for bed QR codes.'
+  : 'Add the hospital\'s WhatsApp Business number first (Super Admin → Hospitals → Edit).');
+
 function linkFor(whatsappNumber, code) {
   const digits = String(whatsappNumber || '').replace(/\D/g, '');
   return digits ? `https://wa.me/${digits}?text=${encodeURIComponent(code)}` : null;
@@ -34,7 +46,7 @@ async function resolveClinic(req, res, clinicId) {
     res.status(403).json({ error: 'Insufficient permissions.' });
     return null;
   }
-  const { rows } = await pool.query('SELECT id, name, whatsapp_number FROM clinics WHERE id = $1', [clinicId]);
+  const { rows } = await pool.query('SELECT id, name, whatsapp_number, hub_business_id FROM clinics WHERE id = $1', [clinicId]);
   if (!rows[0]) {
     res.status(404).json({ error: 'Clinic not found.' });
     return null;
@@ -54,12 +66,16 @@ router.get('/', requireRole('admin', 'coordinator', 'nurse', 'super_admin'), asy
     const { rows } = await pool.query(
       `SELECT b.id, b.label, b.ward, b.code, b.active, b.created_at,
               CASE WHEN $2 THEN (SELECT p.name FROM patients p WHERE p.bed_id = b.id ORDER BY p.created_at DESC LIMIT 1) END AS patient_name
-       FROM beds b WHERE b.clinic_id = $1 AND b.active = true ORDER BY b.ward NULLS LAST, b.label`,
+       FROM beds b WHERE b.clinic_id = $1 AND b.active = true`,
       [clinic.id, showOccupant]
     );
+    // No number = no QR (bug list #4): say so once, clearly, instead of a
+    // "No WhatsApp number" on every card.
     return res.status(200).json({
       success: true,
-      data: rows.map((b) => ({ ...b, link: linkFor(clinic.whatsapp_number, b.code) })),
+      data: rows.sort(compareBeds).map((b) => ({ ...b, link: linkFor(clinic.whatsapp_number, b.code) })),
+      whatsapp_number: clinic.whatsapp_number || null,
+      ...(clinic.whatsapp_number ? {} : { whatsapp_missing: noWhatsApp(clinic) }),
     });
   } catch (error) {
     console.error('Failed to list beds:', error);
@@ -113,7 +129,10 @@ router.post('/', requireRole('admin', 'super_admin'), async (req, res) => {
         }
       }
     }
-    return res.status(201).json({ success: true, data: created, skipped: labels.length - created.length });
+    return res.status(201).json({
+      success: true, data: created.sort(compareBeds), skipped: labels.length - created.length,
+      ...(clinic.whatsapp_number ? {} : { whatsapp_missing: noWhatsApp(clinic) }),
+    });
   } catch (error) {
     console.error('Failed to create beds:', error);
     return res.status(500).json({ error: 'Internal server error' });

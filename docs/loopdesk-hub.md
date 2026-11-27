@@ -27,9 +27,11 @@ Token: HS256, secret `HUB_SECRET`, `iss "regulars-hub"`, `aud "sehat-saathi"`, `
   { "hubBusinessId": "…", "active": true, "plan": "Sehat Saathi Professional — Complete", "paidUntil": "2027-01-31",
     "tools": ["SEHAT_SAATHI", "WAYNERING"], "recordsMode": "with_records",
     "business": { "name": "AIMC Bassi Hospital", "address": "Ludhiana", "phone": "…" },
-    "owner": { "name": "Dr …", "email": "…", "phone": "98…" } }
+    "owner": { "name": "Dr …", "email": "…", "phone": "98…" },
+    "whatsapp": { "phoneNumberId": "1234567890", "displayNumber": "+91 98765 43210" } }
   ```
-  Jawab: `{ accountId, status: "ACTIVE"|"PAUSED", data: { name, created, recordsMode, voiceCalls, consoleUrl, warnings? } }`
+  `whatsapp` (optional, bug list 27 Nov #5): hospital ka **apna** WhatsApp Business number (Loopdesk Settings → location). Isi se bed QR link banta hai. Shared Loopdesk number (+91 90414 36801) kabhi mat bhejo. Nahi bheja to QR band rehte hain aur `warnings` mein bataya jaata hai. **Loopdesk side pe abhi bhejna baaki hai** (`lib/hub/provision.ts`).
+  Jawab: `{ accountId, status: "ACTIVE"|"PAUSED", data: { name, created, recordsMode, whatsappNumber, voiceCalls, consoleUrl, warnings? } }`
 - `POST /api/hub/sso/exchange` — body `{ token }` (`purpose "sso"`, optional `email`, `next`). Jawab: staff session. Dashboard ka `/sso` page ye khud karta hai.
 - `POST /api/hub/whatsapp/inbound` — Bearer token `purpose "whatsapp-inbound"`. Body `{ messages: [ WhatsApp Cloud API message objects ] }` (Meta ka `messages[]` jaisa hai waisa). Turant 200, phir bilkul Meta webhook jaisa handle hota hai (enrolment, family, prescription photo, voice note, urgent flags, STOP).
 

@@ -16,9 +16,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const body = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new Error(body.error || `Request failed (${res.status})`);
+    throw new ApiError(body.error || `Request failed (${res.status})`, res.status, body.code);
   }
   return body as T;
+}
+
+/** An error answer from the API; `code` is the server's machine-readable reason (e.g. DUPLICATE_DOCTOR). */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
 }
 
 export const api = {

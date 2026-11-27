@@ -546,3 +546,9 @@ ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP WITH T
 ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS deactivated_by UUID REFERENCES staff_users(id) ON DELETE SET NULL;
 ALTER TABLE doctors ADD COLUMN IF NOT EXISTS removed_at TIMESTAMP WITH TIME ZONE;
 CREATE INDEX IF NOT EXISTS doctors_staff_user_active_idx ON doctors (staff_user_id) WHERE removed_at IS NULL;
+
+-- 011: one phone format, staff management, invite delivery — see migrations/011_phone_format_and_staff_admin.sql
+ALTER TABLE clinics ADD COLUMN IF NOT EXISTS hub_whatsapp_phone_number_id VARCHAR(50);
+ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS invite_status VARCHAR(10) CHECK (invite_status IN ('sent', 'failed'));
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS invite_error TEXT;
