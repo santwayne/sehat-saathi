@@ -118,7 +118,7 @@ export function AppShell({
         </nav>
 
         <div className="border-t border-sidebar-border px-5 py-4 text-xs text-muted-foreground">
-          {isSuperAdmin ? 'Sehat Saathi · Super Admin' : staff?.clinic_id ? `Clinic ${staff.clinic_id}` : 'Sehat Saathi'}
+          {isSuperAdmin ? 'Sehat Saathi · Super Admin' : staff?.clinic_name || 'Sehat Saathi'}
         </div>
       </aside>
 

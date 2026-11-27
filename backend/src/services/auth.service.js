@@ -32,16 +32,16 @@ function verifyToken(token) {
  * staff id to keep it to one small query per person, and dropped immediately
  * when someone is removed (forgetStaffStatus).
  */
-const statusCache = new Map(); // id -> { active, at }
+const statusCache = new Map(); // id -> { active, role, at }
 const STATUS_TTL_MS = 30_000;
-async function staffIsActive(id) {
+async function staffStatus(id) {
   const hit = statusCache.get(id);
-  if (hit && Date.now() - hit.at < STATUS_TTL_MS) return hit.active;
-  const { rows } = await pool.query('SELECT deactivated_at FROM staff_users WHERE id = $1', [id]);
-  const active = !!rows[0] && !rows[0].deactivated_at;
-  statusCache.set(id, { active, at: Date.now() });
+  if (hit && Date.now() - hit.at < STATUS_TTL_MS) return hit;
+  const { rows } = await pool.query('SELECT deactivated_at, role FROM staff_users WHERE id = $1', [id]);
+  const value = { active: !!rows[0] && !rows[0].deactivated_at, role: rows[0]?.role ?? null, at: Date.now() };
+  statusCache.set(id, value);
   if (statusCache.size > 5000) statusCache.clear();
-  return active;
+  return value;
 }
 function forgetStaffStatus(id) { statusCache.delete(id); }
 
@@ -63,7 +63,10 @@ async function attachUser(req, res, next) {
     }
     if (user?.id) {
       try {
-        if (await staffIsActive(user.id)) req.user = user;
+        const status = await staffStatus(user.id);
+        // Tokens never expire, so the role in an old token can be stale after
+        // an admin edits someone's role (Settings → Edit staff): trust the DB.
+        if (status.active) req.user = status.role && user.role !== 'super_admin' ? { ...user, role: status.role } : user;
         else req.authError = 'This account has been deactivated. Contact your hospital administrator.';
       } catch (err) {
         // DB hiccup: don't lock everyone out over the status check.

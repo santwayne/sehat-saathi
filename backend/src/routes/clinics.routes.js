@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
+const { normalizePhone, isValidPhone } = require('../services/phone');
 const { requireRole, hashPassword } = require('../services/auth.service');
 const { logAudit } = require('../services/audit.service');
 const { setRecordsMode, clearClinicAccessCache, clinicAccessInfo, recordsAccessFor } = require('../services/records-access.service');
@@ -64,7 +65,7 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
       `INSERT INTO clinics (name, address, whatsapp_number, whatsapp_phone_number_id, whatsapp_access_token, status, records_mode)
        VALUES ($1, $2, $3, $4, $5, 'onboarding', $6)
        RETURNING id, name, address, whatsapp_number, whatsapp_phone_number_id, status, records_mode, created_at`,
-      [name, address || null, whatsapp_number, whatsapp_phone_number_id || null, whatsapp_access_token || null, records_mode]
+      [name, address || null, normalizePhone(whatsapp_number), whatsapp_phone_number_id || null, whatsapp_access_token || null, records_mode]
     );
     const clinic = clinicRes.rows[0];
 
@@ -73,7 +74,7 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
       `INSERT INTO staff_users (clinic_id, name, role, phone, password_hash)
        VALUES ($1, $2, 'admin', $3, $4)
        RETURNING id, clinic_id, name, role, phone, created_at`,
-      [clinic.id, admin_name, admin_phone, passwordHash]
+      [clinic.id, admin_name, normalizePhone(admin_phone), passwordHash]
     );
 
     await client.query('COMMIT');
@@ -200,7 +201,12 @@ router.patch('/:id', requireRole('super_admin'), async (req, res) => {
     setClauses.push(`status = $${i++}`);
     values.push(status);
   }
-  if (whatsapp_number !== undefined) { setClauses.push(`whatsapp_number = $${i++}`); values.push(whatsapp_number); }
+  if (whatsapp_number !== undefined) {
+    // Same phone format as everywhere else (bug list #3): "91XXXXXXXXXX".
+    const wa = whatsapp_number ? normalizePhone(whatsapp_number) : null;
+    if (wa && !isValidPhone(wa)) return res.status(400).json({ error: 'Enter a valid WhatsApp number (10 digits, or with country code).' });
+    setClauses.push(`whatsapp_number = $${i++}`); values.push(wa);
+  }
   if (whatsapp_phone_number_id !== undefined) { setClauses.push(`whatsapp_phone_number_id = $${i++}`); values.push(whatsapp_phone_number_id); }
   if (whatsapp_access_token !== undefined) { setClauses.push(`whatsapp_access_token = $${i++}`); values.push(whatsapp_access_token); }
 

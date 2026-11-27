@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { pool } = require('../src/db');
 const { hashPassword } = require('../src/services/auth.service');
+const { normalizePhone, isValidPhone } = require('../src/services/phone');
 
 // Bootstraps the very first super_admin account (Super Admin spec, A6).
 // There's no public signup, and creating a staff account normally requires
@@ -12,11 +13,18 @@ const { hashPassword } = require('../src/services/auth.service');
 // environment). Safe to re-run: upserts on phone.
 
 async function main() {
-  const phone = process.env.SUPER_ADMIN_PHONE;
+  // Same phone format as every other login ("91XXXXXXXXXX", migration 011).
+  const phone = normalizePhone(process.env.SUPER_ADMIN_PHONE);
   const password = process.env.SUPER_ADMIN_PASSWORD;
 
   if (!phone || !password) {
     console.error('SUPER_ADMIN_PHONE and SUPER_ADMIN_PASSWORD must be set (in .env or the environment).');
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!isValidPhone(phone)) {
+    console.error('SUPER_ADMIN_PHONE is not a valid mobile number (10 digits, or with country code).');
     process.exitCode = 1;
     return;
   }

@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
-const { downloadWhatsAppMedia, sendWhatsAppMessage, normalizePhone } = require('../services/whatsapp.service');
+const { downloadWhatsAppMedia, sendWhatsAppMessage } = require('../services/whatsapp.service');
+const { digitsOnly } = require('../services/phone');
 const { processPrescriptionOCR } = require('../services/ocr.service');
 const { processInboundMessage, logConversation } = require('../services/conversation.service');
 const { createEscalationFlag } = require('../services/escalation.service');
@@ -90,7 +91,8 @@ router.post('/webhook', async (req, res) => {
  * `message` is a WhatsApp Cloud API message object ({ from, id, type, text|image|audio|document… }).
  */
 async function handleClinicMessage(clinic, message) {
-  const senderPhone = normalizePhone(message.from);
+  // Meta's sender id already has the country code: digits only, no 91 guessing.
+  const senderPhone = digitsOnly(message.from);
   const messageType = message.type;
 
   // "Without patient records" plan: nothing about the sender is stored —

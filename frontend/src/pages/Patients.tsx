@@ -37,6 +37,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/AuthContext';
 import { useEffectiveClinicId } from '@/context/ClinicContext';
 import { api } from '@/lib/api';
+import { formatPhone, PHONE_HINT, PHONE_PLACEHOLDER } from '@/lib/phone';
 import { FamilyAbhaPanel } from '@/components/app/FamilyAbhaPanel';
 import { cn } from '@/lib/utils';
 
@@ -182,7 +183,8 @@ function AddPatientSheet({
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">WhatsApp number</label>
-            <Input required value={form.phone} onChange={update('phone')} placeholder="+919876543210" inputMode="tel" />
+            <Input required value={form.phone} onChange={update('phone')} placeholder={PHONE_PLACEHOLDER} type="tel" inputMode="tel" />
+            <p className="text-xs text-muted-foreground">{PHONE_HINT}</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Language preference</label>
@@ -431,7 +433,7 @@ function PatientDrawer({
           {!editing && (
             <>
               <SheetDescription>
-                {patient.phone} · {patient.doctor_name ?? 'No doctor assigned'}{patient.bed_label ? ` · Bed ${patient.bed_label}` : ''}
+                {formatPhone(patient.phone)} · {patient.doctor_name ?? 'No doctor assigned'}{patient.bed_label ? ` · Bed ${patient.bed_label}` : ''}
               </SheetDescription>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <LanguageBadge lang={patient.language_pref} />
@@ -754,7 +756,7 @@ export default function Patients() {
                     }}
                   >
                     <TableCell className="font-medium">{p.name}</TableCell>
-                    <TableCell className="font-mono text-xs">{p.phone}</TableCell>
+                    <TableCell className="font-mono text-xs">{formatPhone(p.phone)}</TableCell>
                     <TableCell>{p.doctor_name ?? '—'}</TableCell>
                     <TableCell><LanguageBadge lang={p.language_pref} /></TableCell>
                     <TableCell>

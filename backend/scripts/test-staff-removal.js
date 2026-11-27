@@ -32,7 +32,7 @@ const ok = (m) => { passed++; console.log(`  ✓ ${m}`); };
 
   // ---------- trimmed name / phone; doctor record made with the login ----------
   const add = await must(call('POST', '/api/staff', { token: A, body: { clinic_id: clinic.id, name: '  dr   priya ', role: 'doctor', phone: ` ${ph(2)} `, password: 'Priya@12345', specialty: ' Cardiology ' } }), 201);
-  assert.equal(add.data.name, 'dr priya'); assert.equal(add.data.phone, ph(2));
+  assert.equal(add.data.name, 'dr priya'); assert.equal(add.data.phone, `91${ph(2)}`); // saved in the one canonical format (migration 011)
   assert.ok(add.doctor); assert.equal(add.doctor.name, 'dr priya'); assert.equal(add.doctor.specialty, 'Cardiology'); assert.equal(add.doctor.staff_user_id, add.data.id);
   const priya = add.data; const priyaDoc = add.doctor;
   const dr2 = await must(call('POST', '/api/staff', { token: A, body: { clinic_id: clinic.id, name: 'Dr Arjun', role: 'doctor', phone: ph(3), password: 'Arjun@12345' } }), 201);

@@ -56,20 +56,10 @@ function apiUrlFor(phoneNumberId) {
 }
 
 // Strip everything except digits — WhatsApp expects e.g. 917087064479 (no +, no spaces)
-function normalizePhone(phone) {
-  return String(phone).replace(/\D/g, '');
-}
-
-// Bug 6 fix: nothing previously checked that a "WhatsApp number" was
-// actually phone-shaped — any non-empty, not-already-used string (e.g.
-// "12345") was accepted and enrolled permanently. E.164 numbers are at
-// most 15 digits; 10 is the shortest plausible number including a country
-// code (e.g. a US number with no leading '1'). This intentionally doesn't
-// try to validate per-country length/prefix rules — just rejects
-// obviously-not-a-phone-number input, on the already-normalized digits.
-function isValidPhone(digitsOnly) {
-  return /^\d{10,15}$/.test(digitsOnly);
-}
+// Phone helpers live in phone.js (one format everywhere, bug list #3).
+// Outbound `to`: digits of the stored number. Stored numbers are canonical
+// ("91XXXXXXXXXX") since migration 011, and every save path normalises.
+const { normalizePhone, isValidPhone, digitsOnly } = require('./phone');
 
 /**
  * Send text message via WhatsApp API (only valid as a reply within a 24h
@@ -80,7 +70,7 @@ async function sendWhatsAppMessage(toPhone, text, clinicId) {
   // Loopdesk hospital: its WhatsApp number lives in Loopdesk.
   const hubId = await hub.hubWhatsAppRoute(clinicId);
   if (hubId) {
-    return hub.hubSend(hubId, normalizePhone(toPhone), { type: 'text', text: { body: text } }).catch(async (error) => {
+    return hub.hubSend(hubId, digitsOnly(toPhone), { type: 'text', text: { body: text } }).catch(async (error) => {
       await recordPlatformEvent({ source: 'whatsapp_send', clinicId, message: error.message, details: { via: 'loopdesk' } });
       throw error;
     });
@@ -92,7 +82,7 @@ async function sendWhatsAppMessage(toPhone, text, clinicId) {
       {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
-        to: normalizePhone(toPhone),
+        to: digitsOnly(toPhone),
         type: 'text',
         text: { body: text },
       },
@@ -136,7 +126,7 @@ async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyPar
     // (sehat_patient_checkin…), approved in en / hi / pa (Loopdesk lib/hub/tool-templates.ts).
     const hubName = templateName.startsWith('sehat_') ? templateName : `sehat_${templateName}`;
     const hubLang = ['en', 'hi', 'pa'].includes(languageCode) ? languageCode : 'en';
-    return hub.hubSend(hubId, normalizePhone(toPhone), { type: 'template', template: { name: hubName, language: { code: hubLang }, components } })
+    return hub.hubSend(hubId, digitsOnly(toPhone), { type: 'template', template: { name: hubName, language: { code: hubLang }, components } })
       .catch(async (error) => {
         await recordPlatformEvent({ source: 'whatsapp_send', clinicId, message: `Template "${templateName}": ${error.message}`, details: { via: 'loopdesk', template: templateName } });
         throw error;
@@ -149,7 +139,7 @@ async function sendWhatsAppTemplate(toPhone, templateName, languageCode, bodyPar
       apiUrlFor(phoneNumberId),
       {
         messaging_product: 'whatsapp',
-        to: normalizePhone(toPhone),
+        to: digitsOnly(toPhone),
         type: 'template',
         template: {
           name: templateName,
@@ -189,7 +179,7 @@ async function sendCatalogMessage(toPhone, bodyText, clinicId, thumbnailProductR
   const parameters = thumbnailProductRetailerId ? { thumbnail_product_retailer_id: thumbnailProductRetailerId } : {};
   const hubId = await hub.hubWhatsAppRoute(clinicId);
   if (hubId) {
-    return hub.hubSend(hubId, normalizePhone(toPhone), {
+    return hub.hubSend(hubId, digitsOnly(toPhone), {
       type: 'interactive', interactive: { type: 'catalog_message', body: { text: bodyText }, action: { name: 'catalog_message', parameters } },
     });
   }
@@ -200,7 +190,7 @@ async function sendCatalogMessage(toPhone, bodyText, clinicId, thumbnailProductR
       {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
-        to: normalizePhone(toPhone),
+        to: digitsOnly(toPhone),
         type: 'interactive',
         interactive: {
           type: 'catalog_message',

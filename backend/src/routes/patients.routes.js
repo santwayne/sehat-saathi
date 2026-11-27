@@ -5,7 +5,7 @@ const { sendWhatsAppTemplate, normalizePhone, isValidPhone } = require('../servi
 const { requireRole, canAccessClinic } = require('../services/auth.service');
 const regulars = require('../services/regulars.service');
 const { isSupportedLanguage } = require('../services/i18n');
-const { inviteFamilyMember } = require('../services/family.service');
+const { inviteFamilyMember, sendInvite } = require('../services/family.service');
 const abdm = require('../services/abdm.service');
 
 /**
@@ -311,7 +311,7 @@ router.get('/:id/family-members', requireRole(...STAFF_ROLES), async (req, res) 
     const patient = await loadAccessiblePatient(req, res);
     if (!patient) return;
     const { rows } = await pool.query(
-      `SELECT id, name, phone, relationship, status, invited_at, opted_in_at
+      `SELECT id, name, phone, relationship, status, invite_status, invite_error, invited_at, opted_in_at
        FROM family_members WHERE patient_id = $1 ORDER BY invited_at DESC`,
       [patient.id]
     );
@@ -357,6 +357,29 @@ router.post('/:id/family-members', requireRole(...WRITE_ROLES), async (req, res)
       return res.status(409).json({ error: 'This family member has already been added for this patient.' });
     }
     console.error('Failed to add family member:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/patients/:id/family-members/:memberId/resend
+ * Sends the YES/NO opt-in request again — for an invite that wasn't delivered
+ * (e.g. the hospital's WhatsApp number wasn't set up yet) or got no answer.
+ */
+router.post('/:id/family-members/:memberId/resend', requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const patient = await loadAccessiblePatient(req, res);
+    if (!patient) return;
+    const { rows: [member] } = await pool.query(
+      'SELECT * FROM family_members WHERE id = $1 AND patient_id = $2', [req.params.memberId, patient.id]);
+    if (!member) return res.status(404).json({ error: 'Family member not found.' });
+    if (member.status !== 'invited') {
+      return res.status(409).json({ error: member.status === 'active' ? 'They already said YES.' : 'They opted out; they have to message the hospital themselves to join again.' });
+    }
+    const { member: row, delivered } = await sendInvite(member, { patient, clinicName: patient.clinic_name });
+    return res.status(200).json({ success: true, data: row, invite_delivered: delivered });
+  } catch (error) {
+    console.error('Failed to resend family invite:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
