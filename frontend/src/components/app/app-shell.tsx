@@ -6,7 +6,6 @@ import {
   CreditCard,
   Flag,
   LayoutDashboard,
-  LogOut,
   Pill,
   PillBottle,
   Plug,
@@ -50,15 +49,6 @@ const ROLE_LABEL: Record<string, string> = {
   super_admin: 'Super Admin',
 };
 
-function initials(name: string) {
-  return name
-    .split(' ')
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-}
-
 export function AppShell({
   title,
   description,
@@ -85,117 +75,86 @@ export function AppShell({
         return true;
       });
 
+  const pill = 'shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition';
+  const pillIdle = 'text-brand-200 hover:text-white hover:ring-1 hover:ring-inset hover:ring-brand-200';
+  const pillActive = 'bg-white text-brand-800';
+
+  // Loopdesk AI top bar (same as every Loopdesk tool): crimson bar, logo tile + "Loopdesk AI / Sehat Saathi",
+  // pages as pills, who is signed in and Log out on the right. Same pages and rules as before.
   return (
-    <div className="flex min-h-screen w-full bg-background">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-        <div className="px-4 pb-4 pt-5">
-          <img src="/brand/logo-full.png" alt="Sehat Saathi" className="mx-auto w-full max-w-[8.5rem] object-contain" />
-          <p className="mt-2 text-center text-xs text-muted-foreground">{isSuperAdmin ? 'Platform console' : 'Clinic companion'}</p>
-        </div>
+    <div className="min-h-screen w-full bg-background">
+      <header className="bg-brand-700 text-white print:hidden">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 sm:px-6 lg:flex-nowrap">
+          <div className="flex shrink-0 items-center gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-white">
+              <img src="/brand/loopdesk-icon.png" alt="" width={30} height={30} className="size-[30px] object-contain" />
+            </span>
+            <span className="text-base font-bold tracking-tight">Loopdesk AI</span>
+            <span className="text-lg text-brand-200" aria-hidden>/</span>
+            <span className="text-base font-medium">{isSuperAdmin ? 'Sehat Saathi · Console' : 'Sehat Saathi'}</span>
+          </div>
 
-        <nav className="flex-1 space-y-1 px-3" aria-label="Main">
-          {visibleNav.map((item) => {
-            const active = item.end
-              ? location.pathname === item.to
-              : location.pathname.startsWith(item.to);
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                  active
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                    : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
-                )}
-              >
-                <item.icon className="size-4" aria-hidden />
-                {item.label}
-              </NavLink>
-            );
-          })}
-        </nav>
-
-        <div className="border-t border-sidebar-border px-5 py-4 text-xs text-muted-foreground">
-          {isSuperAdmin ? 'Sehat Saathi · Super Admin' : staff?.clinic_name || 'Sehat Saathi'}
-        </div>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border bg-background/95 px-6 py-3.5 backdrop-blur">
-          <nav className="flex gap-1 overflow-x-auto md:hidden" aria-label="Main">
-            {visibleNav.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  cn(
-                    'rounded-md px-2.5 py-1.5 text-xs font-medium',
-                    isActive
-                      ? 'bg-secondary text-secondary-foreground'
-                      : 'text-muted-foreground',
-                  )
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
+          <nav
+            className="order-last flex w-full min-w-0 gap-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] lg:order-none lg:w-auto lg:flex-1"
+            aria-label="Main"
+          >
+            {visibleNav.map((item) => {
+              const active = item.end
+                ? location.pathname === item.to
+                : location.pathname.startsWith(item.to);
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={cn(pill, active ? pillActive : pillIdle)}
+                >
+                  {item.label}
+                </NavLink>
+              );
+            })}
           </nav>
-          <div className="ml-auto flex items-center gap-3">
-            {isSuperAdmin ? (
-              <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
-                Platform operator · never sees patient records
-              </span>
-            ) : (
-              <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
-                {staff?.records_access === 'not_in_plan'
+
+          <div className="ml-auto flex shrink-0 items-center gap-4 text-sm">
+            <span className="hidden rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white xl:inline">
+              {isSuperAdmin
+                ? 'Platform operator · never sees patient records'
+                : staff?.records_access === 'not_in_plan'
                   ? 'No patient records plan'
                   : staff?.records_access === 'awaiting_approval'
                     ? 'Awaiting approval'
                     : staff?.role === 'doctor'
                       ? 'Your patients only'
                       : 'Clinic-wide'}
-              </span>
-            )}
-            <div className="text-right leading-tight">
-              <span className="block text-sm font-semibold text-foreground">{staff?.name}</span>
-              <span className="block text-xs text-muted-foreground">
+            </span>
+            <div className="hidden text-right leading-tight sm:block">
+              <span className="block max-w-[16rem] truncate font-medium text-white" title={staff?.name}>{staff?.name}</span>
+              <span className="block max-w-[16rem] truncate text-xs text-brand-200">
                 {ROLE_LABEL[staff?.role ?? ''] ?? staff?.role}
+                {!isSuperAdmin && staff?.clinic_name ? ` · ${staff.clinic_name}` : ''}
               </span>
             </div>
-            <span
-              aria-hidden
-              className="flex size-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
-            >
-              {initials(staff?.name ?? '?')}
-            </span>
-            <button
-              onClick={logout}
-              aria-label="Log out"
-              className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            >
-              <LogOut className="size-4" aria-hidden />
+            <button onClick={logout} className="font-medium text-brand-200 transition-colors hover:text-white">
+              Log out
             </button>
           </div>
-        </header>
+        </div>
+      </header>
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
-          <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
-                {title}
-              </h1>
-              {description ? (
-                <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>
-              ) : null}
-            </div>
-            {actions}
+      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
+              {title}
+            </h1>
+            {description ? (
+              <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>
+            ) : null}
           </div>
-          {children}
-        </main>
-      </div>
+          {actions}
+        </div>
+        {children}
+      </main>
     </div>
   );
 }

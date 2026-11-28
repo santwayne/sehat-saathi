@@ -37,6 +37,15 @@
   --color-ring: var(--ring);
   --color-ring-offset-background: var(--background);
 
+  /* Loopdesk brand scale (top bar 700, pills 200/800) */
+  --color-brand-50: #fff7f8;
+  --color-brand-100: #fbeeee;
+  --color-brand-200: #ffd2d9;
+  --color-brand-600: #b8142f;
+  --color-brand-700: #a3122a;
+  --color-brand-800: #8f0e24;
+  --color-brand-900: #7d0b1e;
+
   --color-surface: var(--surface);
   --color-surface-deep: var(--surface-deep);
   --color-teal: var(--teal);
