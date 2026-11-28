@@ -13,8 +13,8 @@
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
 
-  --font-display: "Newsreader", ui-serif, Georgia, serif;
-  --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "IBM Plex Sans", "Noto Sans Devanagari", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", "Noto Sans Devanagari", ui-sans-serif, system-ui, sans-serif;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -69,71 +69,76 @@
   --color-chart-5: var(--chart-5);
 }
 
+/* Loopdesk AI design system (same tokens as app.loopdeskai and the other hub tools):
+   logo crimson brand, gray-50 page, IBM Plex Sans everywhere (Noto Devanagari for Hindi),
+   10px inputs, 14px cards. Only colours and type change here; token names are unchanged. */
 :root {
   --radius: 0.625rem;
 
-  --background: oklch(0.995 0.004 200);
-  --foreground: oklch(0.245 0.028 220);
+  --background: #f9fafb;
+  --foreground: #111827;
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.245 0.028 220);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.245 0.028 220);
+  --card: #ffffff;
+  --card-foreground: #111827;
+  --popover: #ffffff;
+  --popover-foreground: #111827;
 
-  --primary: oklch(0.46 0.083 205);
-  --primary-foreground: oklch(0.99 0.005 200);
+  /* brand-600 / white */
+  --primary: #b8142f;
+  --primary-foreground: #ffffff;
 
-  --secondary: oklch(0.955 0.017 195);
-  --secondary-foreground: oklch(0.33 0.045 212);
+  --secondary: #f3f4f6;
+  --secondary-foreground: #111827;
 
-  --muted: oklch(0.962 0.01 200);
-  --muted-foreground: oklch(0.52 0.026 220);
+  --muted: #f3f4f6;
+  --muted-foreground: #4b5563;
 
-  --accent: oklch(0.93 0.032 190);
-  --accent-foreground: oklch(0.31 0.05 210);
+  /* brand-100 / brand-900 soft badge */
+  --accent: #fbeeee;
+  --accent-foreground: #7d0b1e;
 
-  --destructive: oklch(0.55 0.16 28);
-  --destructive-foreground: oklch(0.99 0.005 200);
+  --destructive: #b91c1c;
+  --destructive-foreground: #ffffff;
 
-  --border: oklch(0.905 0.014 205);
-  --input: oklch(0.9 0.014 205);
-  --ring: oklch(0.6 0.06 200);
+  --border: #e5e7eb;
+  --input: #878e99;
+  --ring: #b8142f;
 
-  --surface: oklch(0.972 0.012 195);
-  --surface-deep: oklch(0.315 0.045 215);
-  --teal: oklch(0.55 0.085 190);
-  --teal-foreground: oklch(0.99 0.005 200);
-  --clinical: oklch(0.5 0.075 235);
-  --clinical-foreground: oklch(0.99 0.005 200);
-  --sage: oklch(0.58 0.07 155);
-  --whatsapp: oklch(0.92 0.05 150);
+  --surface: #f3f4f6;
+  /* brand-700, the Loopdesk top bar */
+  --surface-deep: #a3122a;
+  --teal: #b8142f;
+  --teal-foreground: #ffffff;
+  --clinical: #a3122a;
+  --clinical-foreground: #ffffff;
+  --sage: #12805c;
+  --whatsapp: #dcfce7;
 
-  --warning: oklch(0.79 0.13 78);
-  --warning-foreground: oklch(0.4 0.09 62);
-  --warning-surface: oklch(0.97 0.04 80);
-  --warning-border: oklch(0.87 0.08 78);
-  --success: oklch(0.55 0.1 162);
-  --success-surface: oklch(0.96 0.04 162);
+  --warning: #d97706;
+  --warning-foreground: #92400e;
+  --warning-surface: #fffbeb;
+  --warning-border: #fcd34d;
+  --success: #12805c;
+  --success-surface: #ecfdf5;
 
-  --sidebar: oklch(0.972 0.012 195);
-  --sidebar-foreground: oklch(0.245 0.028 220);
-  --sidebar-primary: oklch(0.46 0.083 205);
-  --sidebar-primary-foreground: oklch(0.99 0.005 200);
-  --sidebar-accent: oklch(0.93 0.032 190);
-  --sidebar-accent-foreground: oklch(0.31 0.05 210);
-  --sidebar-border: oklch(0.905 0.014 205);
-  --sidebar-ring: oklch(0.6 0.06 200);
+  --sidebar: #ffffff;
+  --sidebar-foreground: #111827;
+  --sidebar-primary: #b8142f;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fbeeee;
+  --sidebar-accent-foreground: #8f0e24;
+  --sidebar-border: #e5e7eb;
+  --sidebar-ring: #b8142f;
 
-  --shadow-card: 0 1px 2px oklch(0.22 0.03 232 / 6%), 0 8px 24px oklch(0.22 0.03 232 / 4%);
-  --shadow-soft: 0 1px 2px oklch(0.245 0.028 220 / 0.05),
-    0 12px 32px -18px oklch(0.245 0.028 220 / 0.28);
-  --gradient-calm: linear-gradient(170deg, oklch(0.985 0.012 195), oklch(0.955 0.02 190));
+  --shadow-card: 0 1px 2px rgba(17, 24, 39, 0.06);
+  --shadow-soft: 0 8px 24px rgba(17, 24, 39, 0.12);
+  --gradient-calm: linear-gradient(170deg, #fff7f8, #f9fafb);
 
-  --chart-1: oklch(0.55 0.085 190);
-  --chart-2: oklch(0.5 0.075 235);
-  --chart-3: oklch(0.58 0.07 155);
-  --chart-4: oklch(0.66 0.06 200);
-  --chart-5: oklch(0.42 0.06 215);
+  --chart-1: #b8142f;
+  --chart-2: #e8435c;
+  --chart-3: #12805c;
+  --chart-4: #ff8a9b;
+  --chart-5: #7d0b1e;
 }
 
 @layer base {
@@ -152,12 +157,17 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  table,
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
   h1,
   h2,
   h3 {
     font-family: var(--font-display);
-    font-weight: 500;
-    letter-spacing: -0.015em;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 }
 
